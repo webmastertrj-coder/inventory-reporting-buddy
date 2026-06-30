@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import * as XLSX from "xlsx";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -37,9 +38,54 @@ function ProveedorPage() {
   const productsWithSales = Object.keys(inv.sales).length;
 
   const handleExport = () => {
-    toast.info(
-      "La exportación se configurará cuando subas el formato del archivo final.",
-    );
+    if (!keys.ref) {
+      toast.error("No se encontró la columna de Referencia en el inventario.");
+      return;
+    }
+    const header = [
+      "StrProducto",
+      "IntCantidaddoc",
+      "IntvalorUnitario",
+      "IntBodega",
+      "StrLote",
+      "StrColor",
+    ];
+    const data: (string | number)[][] = [header];
+    for (const r of inv.rows) {
+      const qty = inv.sales[r.__id];
+      if (!qty || qty <= 0) continue;
+      data.push([
+        String(r[keys.ref!] ?? ""),
+        qty,
+        0,
+        "01",
+        keys.size ? String(r[keys.size] ?? "") : "",
+        keys.color ? String(r[keys.color] ?? "") : "",
+      ]);
+    }
+    if (data.length === 1) {
+      toast.error("No hay ventas registradas para exportar.");
+      return;
+    }
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    // Force text format for string columns to preserve leading zeros
+    const range = XLSX.utils.decode_range(ws["!ref"]!);
+    const textCols = [0, 3, 4, 5]; // StrProducto, IntBodega, StrLote, StrColor
+    for (let R = 1; R <= range.e.r; R++) {
+      for (const C of textCols) {
+        const addr = XLSX.utils.encode_cell({ r: R, c: C });
+        const cell = ws[addr];
+        if (cell) {
+          cell.t = "s";
+          cell.v = String(cell.v);
+        }
+      }
+    }
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "TblDetalleDocumentos");
+    const stamp = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `CARGA_COMODATOS_${stamp}.xls`, { bookType: "biff8" });
+    toast.success(`Archivo exportado con ${data.length - 1} líneas.`);
   };
 
   if (inv.rows.length === 0) {
