@@ -78,5 +78,8 @@ export function detectKeyColumns(columns: string[]) {
     sku: find(["sku", "codigo", "código", "code", "ref"]),
     name: find(["nombre", "producto", "name", "descrip"]),
     stock: find(["stock", "existencia", "cantidad", "inventario"]),
+    ref: find(["referencia", "ref", "modelo"]),
+    color: find(["color", "colour"]),
+    size: find(["talla", "size", "tamaño", "tamano"]),
   };
 }

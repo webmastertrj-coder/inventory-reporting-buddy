@@ -104,9 +104,12 @@ function ProveedorPage() {
               <table className="w-full text-sm">
                 <thead className="bg-muted text-muted-foreground">
                   <tr>
-                    {keys.sku && <th className="whitespace-nowrap px-3 py-2 text-left font-medium">{keys.sku}</th>}
+                    {keys.ref && <th className="whitespace-nowrap px-3 py-2 text-left font-medium">{keys.ref}</th>}
+                    {keys.sku && keys.sku !== keys.ref && <th className="whitespace-nowrap px-3 py-2 text-left font-medium">{keys.sku}</th>}
                     {keys.name && <th className="whitespace-nowrap px-3 py-2 text-left font-medium">{keys.name}</th>}
-                    {!keys.sku && !keys.name && inv.columns.slice(0, 2).map((c) => (
+                    {keys.color && <th className="whitespace-nowrap px-3 py-2 text-left font-medium">{keys.color}</th>}
+                    {keys.size && <th className="whitespace-nowrap px-3 py-2 text-left font-medium">{keys.size}</th>}
+                    {!keys.sku && !keys.name && !keys.ref && !keys.color && !keys.size && inv.columns.slice(0, 2).map((c) => (
                       <th key={c} className="whitespace-nowrap px-3 py-2 text-left font-medium">{c}</th>
                     ))}
                     {keys.stock && <th className="whitespace-nowrap px-3 py-2 text-right font-medium">{keys.stock}</th>}
@@ -120,9 +123,12 @@ function ProveedorPage() {
                     const over = stock !== null && sold > stock;
                     return (
                       <tr key={r.__id} className="border-t border-border">
-                        {keys.sku && <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">{String(r[keys.sku] ?? "")}</td>}
+                        {keys.ref && <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">{String(r[keys.ref] ?? "")}</td>}
+                        {keys.sku && keys.sku !== keys.ref && <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">{String(r[keys.sku] ?? "")}</td>}
                         {keys.name && <td className="px-3 py-2">{String(r[keys.name] ?? "")}</td>}
-                        {!keys.sku && !keys.name && inv.columns.slice(0, 2).map((c) => (
+                        {keys.color && <td className="whitespace-nowrap px-3 py-2">{String(r[keys.color] ?? "")}</td>}
+                        {keys.size && <td className="whitespace-nowrap px-3 py-2">{String(r[keys.size] ?? "")}</td>}
+                        {!keys.sku && !keys.name && !keys.ref && !keys.color && !keys.size && inv.columns.slice(0, 2).map((c) => (
                           <td key={c} className="px-3 py-2">{String(r[c] ?? "")}</td>
                         ))}
                         {keys.stock && (
