@@ -49,11 +49,12 @@ function persist() {
 export function setInventory(sellerEmail: string, columns: string[], rows: InventoryRow[]) {
   const email = sellerEmail.toLowerCase();
   const sellers = { ...state.sellers };
+  const existingInv = sellers[email];
   sellers[email] = {
     columns,
     rows,
     uploadedAt: new Date().toISOString(),
-    sales: {},
+    sales: existingInv ? existingInv.sales : {},
   };
   state = { ...state, sellers };
   persist();
@@ -137,6 +138,12 @@ export function detectKeyColumns(columns: string[]) {
     return idx >= 0 ? columns[idx] : null;
   };
 
+  // Prioritize "pvp" for price, otherwise search standard price keys
+  const pvpIdx = lower.findIndex((c) => c === "pvp" || c.includes("pvp"));
+  const priceCol = pvpIdx >= 0
+    ? columns[pvpIdx]
+    : find(["precio", "valor", "price", "costo", "cost", "unitario"]);
+
   return {
     sku: find(["sku", "codigo", "código", "code", "ref"], refCol),
     name: find(["nombre", "producto", "name", "descrip"], refCol),
@@ -144,6 +151,30 @@ export function detectKeyColumns(columns: string[]) {
     ref: refCol,
     color: find(["color", "colour"]),
     size: find(["talla", "size", "tamaño", "tamano", "lote", "strlote"]),
-    price: find(["precio", "valor", "price", "costo", "cost", "unitario"]),
+    price: priceCol,
   };
+}
+
+export function parsePrice(val: any): number {
+  if (val === undefined || val === null || val === "") return 0;
+  if (typeof val === "number") return val;
+  
+  let str = String(val).trim();
+  // Remove currency signs, spaces
+  str = str.replace(/[\$\s]/g, "");
+  
+  // Match 1 or 2 digits at the end preceded by dot or comma (decimals)
+  const matchDecimal = str.match(/[\.,](\d{1,2})$/);
+  if (matchDecimal) {
+    const decimals = matchDecimal[1];
+    // Remove all dots/commas from the main part
+    const mainPart = str.substring(0, matchDecimal.index!).replace(/[\.,]/g, "");
+    str = mainPart + "." + decimals;
+  } else {
+    // Remove all dots/commas
+    str = str.replace(/[\.,]/g, "");
+  }
+  
+  const num = Number(str);
+  return isNaN(num) ? 0 : num;
 }

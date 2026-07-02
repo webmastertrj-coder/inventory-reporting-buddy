@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { setInventory, useInventory, clearSellerInventory, resetSales, detectKeyColumns, type InventoryRow } from "@/lib/inventory-store";
+import { setInventory, useInventory, clearSellerInventory, resetSales, detectKeyColumns, type InventoryRow, parsePrice } from "@/lib/inventory-store";
 import { useAuth } from "@/lib/auth-store";
 import { translateColor } from "@/lib/color-mapping";
 
@@ -26,14 +26,19 @@ export const Route = createFileRoute("/")({
 });
 
 function Index() {
-  const { user, loading: authLoading, logout, sellers, addSeller } = useAuth();
+  const { user, loading: authLoading, logout, sellers, addSeller, updateSellerCommission } = useAuth();
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileLoading, setFileLoading] = useState(false);
   const [selectedSellerEmail, setSelectedSellerEmail] = useState<string>("");
   const [newSellerName, setNewSellerName] = useState("");
   const [newSellerEmail, setNewSellerEmail] = useState("");
+  const [newSellerCommission, setNewSellerCommission] = useState("10");
   const [showAddForm, setShowAddForm] = useState(false);
+
+  // States for editing commission
+  const [isEditingCommission, setIsEditingCommission] = useState(false);
+  const [editCommissionValue, setEditCommissionValue] = useState("10");
 
   // Hook to get the inventory of the selected seller
   const selectedInv = useInventory(selectedSellerEmail);
@@ -62,15 +67,31 @@ function Index() {
       toast.error("Por favor completa el nombre y el correo.");
       return;
     }
-    const success = addSeller(newSellerName, newSellerEmail);
+    const success = addSeller(newSellerName, newSellerEmail, Number(newSellerCommission) || 0);
     if (success) {
       toast.success(`Vendedor "${newSellerName}" registrado con éxito. Contraseña por defecto: vendedor123`);
       setSelectedSellerEmail(newSellerEmail);
       setNewSellerName("");
       setNewSellerEmail("");
+      setNewSellerCommission("10");
       setShowAddForm(false);
     } else {
       toast.error("Este vendedor ya existe en el sistema.");
+    }
+  };
+
+  const handleSaveCommission = () => {
+    const val = Number(editCommissionValue);
+    if (isNaN(val) || val < 0 || val > 100) {
+      toast.error("Por favor ingresa un porcentaje válido entre 0 y 100.");
+      return;
+    }
+    const success = updateSellerCommission(selectedSellerEmail, val);
+    if (success) {
+      toast.success("Comisión actualizada con éxito.");
+      setIsEditingCommission(false);
+    } else {
+      toast.error("No se pudo actualizar la comisión.");
     }
   };
 
@@ -90,10 +111,19 @@ function Index() {
         return;
       }
       const columns = Object.keys(json[0]);
-      const rows: InventoryRow[] = json.map((r, i) => ({
-        ...(r as Record<string, string | number>),
-        __id: `row_${i}_${Date.now()}`,
-      }));
+      const tempKeys = detectKeyColumns(columns);
+      const rows: InventoryRow[] = json.map((r, i) => {
+        const refPart = tempKeys.ref ? String(r[tempKeys.ref] ?? "") : "";
+        const colorPart = tempKeys.color ? String(r[tempKeys.color] ?? "") : "";
+        const sizePart = tempKeys.size ? String(r[tempKeys.size] ?? "") : "";
+        const stableId = (refPart || colorPart || sizePart)
+          ? `row_${refPart}_${colorPart}_${sizePart}`.replace(/\s+/g, "_")
+          : `row_${i}`;
+        return {
+          ...(r as Record<string, string | number>),
+          __id: stableId,
+        };
+      });
       setInventory(selectedSellerEmail, columns, rows);
       toast.success(`Inventario cargado: ${rows.length} productos para ${selectedSellerEmail}`);
     } catch (e) {
@@ -158,6 +188,143 @@ function Index() {
     const sellerSlug = selectedSellerEmail.split("@")[0];
     XLSX.writeFile(wb, `REPORTE_${sellerSlug.toUpperCase()}_${stamp}.xls`, { bookType: "biff8" });
     toast.success(`Archivo exportado con ${data.length - 1} líneas para el vendedor.`);
+  };
+
+  const handleExportSellerCommissions = () => {
+    if (!keys.ref) {
+      toast.error("No se encontró la columna de Referencia en el inventario.");
+      return;
+    }
+    const commPercent = activeSellerObj?.commission ?? 0;
+    const header = [
+      "StrProducto",
+      "Descripción",
+      "StrLote",
+      "StrColor",
+      "Cantidad",
+      "Precio Unitario",
+      "VENTA CON IVA",
+      "VENTA SIN IVA",
+      `COMISION ${commPercent}%`,
+      "IVA COMISION (19%)",
+      "RETEFUENTE (11%)",
+      "TOTAL COMISION",
+      "TOTAL A REEMBOLSAR",
+    ];
+    const data: (string | number)[][] = [header];
+
+    let totalQty = 0;
+    let totalVentaConIva = 0;
+    let totalVentaSinIva = 0;
+    let totalComision = 0;
+    let totalIvaComision = 0;
+    let totalRetefuente = 0;
+    let totalTotalComision = 0;
+    let totalTotalReembolsar = 0;
+
+    for (const r of selectedInv.rows) {
+      const qty = selectedInv.sales[r.__id];
+      if (!qty || qty <= 0) continue;
+      const price = keys.price ? parsePrice(r[keys.price]) : 0;
+      
+      const ventaConIva = qty * price;
+      const ventaSinIva = Math.round(ventaConIva / 1.19);
+      const comision = Math.round(ventaSinIva * (commPercent / 100));
+      const ivaComision = Math.round(comision * 0.19);
+      const retefuente = Math.round(comision * 0.11);
+      const rowTotalComision = comision + ivaComision - retefuente;
+      const rowTotalReembolsar = ventaConIva - rowTotalComision;
+
+      totalQty += qty;
+      totalVentaConIva += ventaConIva;
+      totalVentaSinIva += ventaSinIva;
+      totalComision += comision;
+      totalIvaComision += ivaComision;
+      totalRetefuente += retefuente;
+      totalTotalComision += rowTotalComision;
+      totalTotalReembolsar += rowTotalReembolsar;
+
+      data.push([
+        String(r[keys.ref!] ?? ""),
+        keys.name ? String(r[keys.name] ?? "") : "Producto",
+        keys.size ? String(r[keys.size] ?? "") : "",
+        keys.color ? String(r[keys.color] ?? "") : "",
+        qty,
+        price,
+        ventaConIva,
+        ventaSinIva,
+        comision,
+        ivaComision,
+        retefuente,
+        rowTotalComision,
+        rowTotalReembolsar,
+      ]);
+    }
+
+    if (data.length === 1) {
+      toast.error("No hay ventas registradas para exportar.");
+      return;
+    }
+
+    // Add Totals row
+    data.push([
+      "TOTAL",
+      "",
+      "",
+      "",
+      totalQty,
+      "",
+      totalVentaConIva,
+      totalVentaSinIva,
+      totalComision,
+      totalIvaComision,
+      totalRetefuente,
+      totalTotalComision,
+      totalTotalReembolsar,
+    ]);
+
+    // Add empty row and summary card
+    data.push([]);
+    data.push(["TOTAL A REEMBOLSAR", "Reembolso a la marca"]);
+    data.push([totalTotalReembolsar]);
+
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    const range = XLSX.utils.decode_range(ws["!ref"]!);
+    
+    const textCols = [0, 1, 2, 3];
+    const currencyCols = [5, 6, 7, 8, 9, 10, 11, 12];
+
+    for (let R = 1; R <= range.e.r; R++) {
+      for (let C = 0; C <= range.e.c; C++) {
+        const addr = XLSX.utils.encode_cell({ r: R, c: C });
+        const cell = ws[addr];
+        if (!cell) continue;
+
+        if (textCols.includes(C) && R < data.length - 3) {
+          cell.t = "s";
+          cell.v = String(cell.v);
+        } else if (currencyCols.includes(C) && typeof cell.v === "number") {
+          cell.t = "n";
+          cell.z = "$#,##0";
+        }
+      }
+    }
+
+    // Format summary cell at the bottom
+    const lastRowIndex = data.length - 1;
+    const summaryCellAddr = XLSX.utils.encode_cell({ r: lastRowIndex, c: 0 });
+    const summaryCell = ws[summaryCellAddr];
+    if (summaryCell && typeof summaryCell.v === "number") {
+      summaryCell.t = "n";
+      summaryCell.z = "$#,##0";
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Comisiones");
+    const stamp = new Date().toISOString().slice(0, 10);
+    const sellerSlug = selectedSellerEmail.split("@")[0];
+    XLSX.writeFile(wb, `REPORTE_COMISIONES_${sellerSlug.toUpperCase()}_${stamp}.xls`, { bookType: "biff8" });
+    toast.success("¡Reporte de comisiones exportado con éxito!");
   };
 
   if (authLoading || !user || user.role !== "admin") {
@@ -259,8 +426,23 @@ function Index() {
                         required
                       />
                     </div>
-                    <div className="flex gap-2 justify-end pt-1">
-                      <Button type="button" variant="ghost" size="sm" onClick={() => setShowAddForm(false)} className="h-7 text-xs">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="sellerCommission" className="text-xs">Comisión (%)</Label>
+                      <Input
+                        id="sellerCommission"
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                        placeholder="Ej. 10"
+                        value={newSellerCommission}
+                        onChange={(e) => setNewSellerCommission(e.target.value)}
+                        className="h-8 text-xs"
+                        required
+                      />
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setShowAddForm(false)}>
                         Cancelar
                       </Button>
                       <Button type="submit" size="sm" className="h-7 text-xs">
@@ -304,6 +486,56 @@ function Index() {
                       <h2 className="text-xl font-bold text-foreground">{activeSellerObj.name}</h2>
                     </div>
                     <p className="text-sm text-muted-foreground mt-0.5">{activeSellerObj.email}</p>
+                    <div className="flex items-center gap-3 mt-2 flex-wrap">
+                      <p className="text-xs text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                        <span>Comisión:</span>
+                        {isEditingCommission ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <Input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="0.1"
+                              value={editCommissionValue}
+                              onChange={(e) => setEditCommissionValue(e.target.value)}
+                              className="h-7 w-16 text-xs py-0 px-2 border-border/80 bg-background"
+                              required
+                            />
+                            <span className="text-xs font-bold text-foreground">%</span>
+                            <Button
+                              size="sm"
+                              className="h-7 px-2 py-0 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold gap-1 rounded-md"
+                              onClick={handleSaveCommission}
+                            >
+                              Guardar
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 py-0 text-xs font-medium text-muted-foreground hover:bg-accent rounded-md"
+                              onClick={() => setIsEditingCommission(false)}
+                            >
+                              Cancelar
+                            </Button>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="font-extrabold text-foreground bg-primary/10 text-primary px-2 py-0.5 rounded text-2xs border border-primary/15">
+                              {activeSellerObj.commission ?? 0}%
+                            </span>
+                            <button
+                              onClick={() => {
+                                setEditCommissionValue(String(activeSellerObj.commission ?? 0));
+                                setIsEditingCommission(true);
+                              }}
+                              className="text-xs text-primary hover:underline font-bold"
+                            >
+                              Editar
+                            </button>
+                          </span>
+                        )}
+                      </p>
+                    </div>
                   </div>
                   {selectedInv.uploadedAt ? (
                     <div className="flex items-center gap-1.5 text-xs text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-400 border border-emerald-200/55 rounded-full px-3 py-1 font-medium w-fit">
@@ -402,14 +634,36 @@ function Index() {
                 {/* Table of loaded products */}
                 {selectedInv.rows.length > 0 && (
                   <Card className="border-border/60 shadow-sm">
-                    <CardHeader>
-                      <CardTitle className="text-base flex items-center gap-2">
-                        <FileText className="h-5 w-5 text-primary" />
-                        2. Productos cargados en sistema
-                      </CardTitle>
-                      <CardDescription>
-                        Vista preliminar de las referencias del vendedor. Se muestran las primeras 25 filas.
-                      </CardDescription>
+                    <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                      <div>
+                        <CardTitle className="text-base flex items-center gap-2">
+                          <FileText className="h-5 w-5 text-primary" />
+                          2. Productos cargados en sistema
+                        </CardTitle>
+                        <CardDescription>
+                          Vista preliminar de las referencias del vendedor. Se muestran las primeras 25 filas.
+                        </CardDescription>
+                      </div>
+                      <div className="flex flex-wrap gap-2 sm:ml-auto">
+                        <Button
+                          onClick={handleExportSellerSales}
+                          disabled={productsWithSales === 0}
+                          className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-xs shrink-0"
+                          title="Descargar reporte estándar de ventas para cargar al sistema"
+                        >
+                          <FileSpreadsheet className="h-4 w-4" />
+                          Reporte de Ventas
+                        </Button>
+                        <Button
+                          onClick={handleExportSellerCommissions}
+                          disabled={productsWithSales === 0}
+                          className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-xs shrink-0"
+                          title="Descargar reporte detallado de ventas con comisiones de vendedor"
+                        >
+                          <FileSpreadsheet className="h-4 w-4" />
+                          Reporte de Comisiones
+                        </Button>
+                      </div>
                     </CardHeader>
                     <CardContent>
                       <div className="overflow-auto rounded-md border border-border bg-card">
@@ -484,7 +738,7 @@ function SellerListItem({
   isSelected,
   onSelect,
 }: {
-  seller: { email: string; name: string };
+  seller: { email: string; name: string; commission?: number };
   isSelected: boolean;
   onSelect: () => void;
 }) {
@@ -502,7 +756,7 @@ function SellerListItem({
     >
       <div className="truncate pr-2">
         <p className={`font-semibold text-xs truncate ${isSelected ? "text-primary" : "text-foreground"}`}>
-          {seller.name}
+          {seller.name} {seller.commission !== undefined && `(${seller.commission}%)`}
         </p>
         <p className="text-2xs text-muted-foreground truncate">{seller.email}</p>
       </div>

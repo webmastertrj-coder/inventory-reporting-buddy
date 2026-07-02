@@ -4,6 +4,7 @@ export interface User {
   email: string;
   role: "admin" | "vendedor";
   name: string;
+  commission?: number;
 }
 
 interface UserDatabaseEntry extends User {
@@ -16,7 +17,8 @@ interface AuthContextType {
   login: (email: string, password: string) => boolean;
   logout: () => void;
   sellers: User[];
-  addSeller: (name: string, email: string) => boolean;
+  addSeller: (name: string, email: string, commission: number) => boolean;
+  updateSellerCommission: (email: string, commission: number) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -25,9 +27,9 @@ const SESSION_KEY = "auth_session_v1";
 const USERS_KEY = "auth_users_v1";
 
 const SEED_USERS: Record<string, UserDatabaseEntry> = {
-  "admin@comodatos.com": { email: "admin@comodatos.com", role: "admin", name: "Administrador", password: "admin123" },
-  "vendedor@comodatos.com": { email: "vendedor@comodatos.com", role: "vendedor", name: "Vendedor Comodatos", password: "vendedor123" },
-  "vendedor2@comodatos.com": { email: "vendedor2@comodatos.com", role: "vendedor", name: "Vendedor Alterno", password: "vendedor123" },
+  "admin@comodatos.com": { email: "admin@comodatos.com", role: "admin", name: "Administrador", password: "admin123", commission: 0 },
+  "vendedor@comodatos.com": { email: "vendedor@comodatos.com", role: "vendedor", name: "Vendedor Comodatos", password: "vendedor123", commission: 10 },
+  "vendedor2@comodatos.com": { email: "vendedor2@comodatos.com", role: "vendedor", name: "Vendedor Alterno", password: "vendedor123", commission: 8 },
 };
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -81,7 +83,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   };
 
-  const addSeller = (name: string, email: string): boolean => {
+  const addSeller = (name: string, email: string, commission: number): boolean => {
     const normalizedEmail = email.trim().toLowerCase();
     if (users[normalizedEmail]) {
       // User already exists
@@ -92,6 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       email: normalizedEmail,
       role: "vendedor",
       password: "vendedor123", // Default password for new sellers
+      commission,
     };
     const updatedUsers = { ...users, [normalizedEmail]: newUser };
     localStorage.setItem(USERS_KEY, JSON.stringify(updatedUsers));
@@ -101,10 +104,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const sellers = Object.values(users)
     .filter((u) => u.role === "vendedor")
-    .map((u) => ({ email: u.email, role: u.role, name: u.name }));
+    .map((u) => ({ email: u.email, role: u.role, name: u.name, commission: u.commission ?? 0 }));
+
+  const updateSellerCommission = (email: string, commission: number): boolean => {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!users[normalizedEmail]) {
+      return false;
+    }
+    const updatedUser = { ...users[normalizedEmail], commission };
+    const updatedUsers = { ...users, [normalizedEmail]: updatedUser };
+    localStorage.setItem(USERS_KEY, JSON.stringify(updatedUsers));
+    setUsers(updatedUsers);
+    return true;
+  };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, sellers, addSeller }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, sellers, addSeller, updateSellerCommission }}>
       {children}
     </AuthContext.Provider>
   );

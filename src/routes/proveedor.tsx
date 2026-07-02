@@ -24,7 +24,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { detectKeyColumns, resetSales, setSale, useInventory, InventoryRow } from "@/lib/inventory-store";
+import { detectKeyColumns, resetSales, setSale, useInventory, InventoryRow, parsePrice } from "@/lib/inventory-store";
 import { useAuth } from "@/lib/auth-store";
 import { translateColor } from "@/lib/color-mapping";
 
@@ -153,7 +153,7 @@ function ProveedorPage() {
         const refVal = keys.ref ? String(row[keys.ref] ?? "") : "";
         const colorVal = keys.color ? String(row[keys.color] ?? "") : "";
         const sizeVal = keys.size ? String(row[keys.size] ?? "") : "";
-        const priceVal = keys.price ? Number(row[keys.price]) || 0 : 0;
+        const priceVal = keys.price ? parsePrice(row[keys.price]) : 0;
         const stockVal = keys.stock ? Number(row[keys.stock]) || 0 : null;
 
         const descParts = [];
@@ -646,7 +646,7 @@ function ProductVirtualCard({
   const soldQty = activeVariant ? (inv.sales[activeVariant.__id] ?? 0) : 0;
   const stock = activeVariant && keys.stock ? Number(activeVariant[keys.stock]) || 0 : null;
   const over = stock !== null && soldQty > stock;
-  const priceVal = activeVariant && keys.price ? Number(activeVariant[keys.price]) || 0 : 0;
+  const priceVal = activeVariant && keys.price ? parsePrice(activeVariant[keys.price]) : 0;
 
   // Cumulative quantities for the visual indicator on the card
   const totalSoldInProduct = useMemo(() => {
