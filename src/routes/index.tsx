@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { setInventory, useInventory, clearSellerInventory, resetSales, detectKeyColumns, type InventoryRow } from "@/lib/inventory-store";
 import { useAuth } from "@/lib/auth-store";
+import { translateColor } from "@/lib/color-mapping";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -432,7 +433,7 @@ function Index() {
                                 <tr key={r.__id} className="border-b border-border/50 last:border-0 hover:bg-muted/30 transition-colors">
                                   {selectedInv.columns.map((c) => (
                                     <td key={c} className="whitespace-nowrap px-3 py-2.5 text-foreground/80">
-                                      {String(r[c] ?? "")}
+                                      {c === keys.color ? translateColor(r[c]) : String(r[c] ?? "")}
                                     </td>
                                   ))}
                                   <td className="whitespace-nowrap px-3 py-2.5 text-right font-medium text-primary">

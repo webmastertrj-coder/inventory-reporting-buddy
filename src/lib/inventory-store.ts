@@ -121,16 +121,29 @@ export function useInventory(sellerEmail: string): SellerInventory {
 /** Try to find a sensible "name" and "sku" column heuristically */
 export function detectKeyColumns(columns: string[]) {
   const lower = columns.map((c) => c.toLowerCase());
-  const find = (needles: string[]) => {
-    const idx = lower.findIndex((c) => needles.some((n) => c.includes(n)));
+  
+  // Explicitly search for "strproducto" or standard ref keys
+  const strProductIdx = lower.findIndex((c) => c === "strproducto");
+  const refCol = strProductIdx >= 0 
+    ? columns[strProductIdx] 
+    : (lower.findIndex((c) => ["referencia", "ref", "modelo"].some((n) => c.includes(n))) >= 0 
+        ? columns[lower.findIndex((c) => ["referencia", "ref", "modelo"].some((n) => c.includes(n)))] 
+        : null);
+
+  const find = (needles: string[], exclude: string | null = null) => {
+    const idx = lower.findIndex((c, i) => 
+      columns[i] !== exclude && needles.some((n) => c.includes(n))
+    );
     return idx >= 0 ? columns[idx] : null;
   };
+
   return {
-    sku: find(["sku", "codigo", "código", "code", "ref"]),
-    name: find(["nombre", "producto", "name", "descrip"]),
+    sku: find(["sku", "codigo", "código", "code", "ref"], refCol),
+    name: find(["nombre", "producto", "name", "descrip"], refCol),
     stock: find(["stock", "existencia", "cantidad", "inventario"]),
-    ref: find(["referencia", "ref", "modelo"]),
+    ref: refCol,
     color: find(["color", "colour"]),
-    size: find(["talla", "size", "tamaño", "tamano"]),
+    size: find(["talla", "size", "tamaño", "tamano", "lote", "strlote"]),
+    price: find(["precio", "valor", "price", "costo", "cost", "unitario"]),
   };
 }
