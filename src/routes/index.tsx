@@ -327,6 +327,57 @@ function Index() {
     toast.success("¡Reporte de comisiones exportado con éxito!");
   };
 
+  const handleDownloadTemplate = () => {
+    const headers = [
+      "StrProducto",
+      "Descripción",
+      "StrLote",
+      "StrColor",
+      "IntCantidaddoc",
+      "PVP"
+    ];
+    const sampleRows = [
+      ["B01097081", "Blusa Encaje Manga Larga", "S", "01", 10, 45000],
+      ["B01097081", "Blusa Encaje Manga Larga", "M", "01", 15, 45000],
+      ["B01097081", "Blusa Encaje Manga Larga", "S", "02", 5, 45000],
+      ["B01097082", "Jeans Skinny Tiro Alto", "06", "08", 20, 85000],
+      ["B01097082", "Jeans Skinny Tiro Alto", "08", "08", 25, 85000],
+      ["B01097082", "Jeans Skinny Tiro Alto", "06", "51", 12, 85000],
+    ];
+    const data = [headers, ...sampleRows];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    
+    const range = XLSX.utils.decode_range(ws["!ref"]!);
+    for (let R = 1; R <= range.e.r; R++) {
+      const qtyAddr = XLSX.utils.encode_cell({ r: R, c: 4 });
+      const qtyCell = ws[qtyAddr];
+      if (qtyCell) {
+        qtyCell.t = "n";
+      }
+
+      const pvpAddr = XLSX.utils.encode_cell({ r: R, c: 5 });
+      const pvpCell = ws[pvpAddr];
+      if (pvpCell) {
+        pvpCell.t = "n";
+        pvpCell.z = "$#,##0";
+      }
+
+      for (const C of [0, 2, 3]) {
+        const addr = XLSX.utils.encode_cell({ r: R, c: C });
+        const cell = ws[addr];
+        if (cell) {
+          cell.t = "s";
+          cell.v = String(cell.v);
+        }
+      }
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Inventario_Plantilla");
+    XLSX.writeFile(wb, "PLANTILLA_INVENTARIO_CLIENTE.xls", { bookType: "biff8" });
+    toast.success("¡Plantilla de inventario descargada con éxito!");
+  };
+
   if (authLoading || !user || user.role !== "admin") {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -583,6 +634,15 @@ function Index() {
                     <div className="flex flex-wrap items-center gap-3">
                       <Button onClick={() => inputRef.current?.click()} disabled={fileLoading}>
                         {fileLoading ? "Procesando…" : selectedInv.rows.length ? "Reemplazar archivo" : "Seleccionar archivo"}
+                      </Button>
+                      
+                      <Button
+                        variant="outline"
+                        onClick={handleDownloadTemplate}
+                        className="gap-1.5 border-primary/20 hover:border-primary/45 text-primary hover:bg-primary/5 font-semibold"
+                      >
+                        <FileSpreadsheet className="h-4 w-4" />
+                        Descargar Plantilla
                       </Button>
                       
                       {selectedInv.uploadedAt && (
