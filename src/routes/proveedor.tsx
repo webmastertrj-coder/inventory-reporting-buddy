@@ -1,11 +1,13 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useMemo, useState, useEffect } from "react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
+import { LogOut, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { detectKeyColumns, resetSales, setSale, useInventory } from "@/lib/inventory-store";
+import { useAuth } from "@/lib/auth-store";
 
 export const Route = createFileRoute("/proveedor")({
   head: () => ({
@@ -21,8 +23,16 @@ export const Route = createFileRoute("/proveedor")({
 });
 
 function ProveedorPage() {
-  const inv = useInventory();
+  const { user, loading: authLoading } = useAuth();
+  const navigate = useNavigate();
+  const inv = useInventory(user?.email || "");
   const [filter, setFilter] = useState("");
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate({ to: "/login" });
+    }
+  }, [user, authLoading, navigate]);
 
   const keys = useMemo(() => detectKeyColumns(inv.columns), [inv.columns]);
 
@@ -88,6 +98,17 @@ function ProveedorPage() {
     toast.success(`Archivo exportado con ${data.length - 1} líneas.`);
   };
 
+  if (authLoading || !user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-2">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">Verificando acceso...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (inv.rows.length === 0) {
     return (
       <div className="min-h-screen bg-background">
@@ -107,7 +128,7 @@ function ProveedorPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background animate-in fade-in duration-300">
       <Header />
       <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
         <div className="grid gap-4 sm:grid-cols-3">
@@ -128,7 +149,7 @@ function ProveedorPage() {
               <Button
                 variant="ghost"
                 onClick={() => {
-                  resetSales();
+                  if (user) resetSales(user.email);
                   toast.success("Ventas reiniciadas");
                 }}
               >
@@ -187,7 +208,9 @@ function ProveedorPage() {
                             type="number"
                             min={0}
                             value={sold || ""}
-                            onChange={(e) => setSale(r.__id, Number(e.target.value) || 0)}
+                            onChange={(e) => {
+                              if (user) setSale(user.email, r.__id, Number(e.target.value) || 0);
+                            }}
                             className={`ml-auto w-24 text-right ${over ? "border-destructive" : ""}`}
                             placeholder="0"
                           />
@@ -214,19 +237,45 @@ function ProveedorPage() {
 }
 
 function Header() {
+  const { user, logout } = useAuth();
+
   return (
     <header className="border-b border-border bg-card">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
         <div>
           <h1 className="text-xl font-semibold text-foreground">Ventas del mes</h1>
-          <p className="text-sm text-muted-foreground">Vista del proveedor</p>
+          <p className="text-sm text-muted-foreground flex items-center gap-1.5 flex-wrap">
+            <span>Vista del proveedor</span>
+            {user && (
+              <>
+                <span className="h-1 w-1 rounded-full bg-muted-foreground/45" />
+                <span className="text-xs font-semibold text-primary">Hola, {user.name}</span>
+              </>
+            )}
+          </p>
         </div>
-        <Link
-          to="/"
-          className="rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-accent"
-        >
-          ← Panel admin
-        </Link>
+        <div className="flex items-center gap-3">
+          {user?.role === "admin" && (
+            <Link
+              to="/"
+              className="rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition-colors"
+            >
+              ← Panel admin
+            </Link>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              logout();
+              toast.success("Sesión cerrada");
+            }}
+            className="gap-2 border-destructive/20 text-destructive hover:bg-destructive/10 hover:text-destructive transition-all"
+          >
+            <LogOut className="h-4 w-4" />
+            Salir
+          </Button>
+        </div>
       </div>
     </header>
   );
