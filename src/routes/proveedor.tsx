@@ -19,14 +19,18 @@ import {
   Sparkles,
   Tag,
   CheckCircle2,
-  Package
+  Package,
+  ChevronLeft,
+  ChevronRight,
+  History
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { detectKeyColumns, resetSales, setSale, useInventory, InventoryRow, parsePrice } from "@/lib/inventory-store";
+import { detectKeyColumns, resetSales, setSale, useInventory, InventoryRow, parsePrice, addExportLog, deleteExportLog, useExportLogs } from "@/lib/inventory-store";
 import { useAuth } from "@/lib/auth-store";
-import { translateColor } from "@/lib/color-mapping";
+import { translateColor, getColorCode } from "@/lib/color-mapping";
+import { generateSalesExcel, generateCommissionsExcel } from "@/lib/excel-helpers";
 
 export const Route = createFileRoute("/proveedor")({
   head: () => ({
@@ -51,15 +55,55 @@ interface GroupedProduct {
 }
 
 function ProveedorPage() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, sellers } = useAuth();
   const navigate = useNavigate();
   const inv = useInventory(user?.email || "");
+  const allLogs = useExportLogs();
+  
+  const myLogs = useMemo(() => {
+    return allLogs.filter((log) => log.sellerEmail === user?.email?.toLowerCase());
+  }, [allLogs, user]);
+
+  const handleDownloadSalesFromLog = (log: any) => {
+    const exportItems = log.items.map((item: any) => ({
+      ref: item.ref,
+      qty: item.qty,
+      size: item.size,
+      color: item.color,
+    }));
+    generateSalesExcel(exportItems, log.warehouseId, user?.name || user?.email || "vendedor");
+    toast.success("Reporte de ventas descargado del historial.");
+  };
+
+  const handleDownloadCommissionsFromLog = (log: any) => {
+    const exportItems = log.items.map((item: any) => ({
+      ref: item.ref,
+      name: item.name,
+      size: item.size,
+      color: item.color,
+      qty: item.qty,
+      price: item.price,
+    }));
+    generateCommissionsExcel(exportItems, log.commissionPercent, user?.name || user?.email || "vendedor");
+    toast.success("Liquidación de comisiones descargada del historial.");
+  };
+
+  const handleDeleteLog = (logId: string) => {
+    deleteExportLog(logId);
+    toast.success("Registro eliminado del historial.");
+  };
   
   // UI States
   const [activeTab, setActiveTab] = useState<"register" | "report">("register");
   const [filter, setFilter] = useState("");
   const [showOnlySales, setShowOnlySales] = useState(false);
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  // Reset pagination on filter change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter, showOnlySales]);
   
   // E-commerce states: selected color and size per product
   // key: product.key -> { color: string, size: string }
@@ -72,6 +116,16 @@ function ProveedorPage() {
   }, [user, authLoading, navigate]);
 
   const keys = useMemo(() => detectKeyColumns(inv.columns), [inv.columns]);
+
+  const commPercent = useMemo(() => {
+    const s = sellers?.find((s) => s.email === user?.email);
+    return s?.commission ?? 0;
+  }, [sellers, user]);
+
+  const warehouseId = useMemo(() => {
+    const s = sellers?.find((s) => s.email === user?.email);
+    return s?.warehouseId ?? "01";
+  }, [sellers, user]);
 
   // Group products by Name or Reference
   const groupedProducts = useMemo(() => {
@@ -179,54 +233,141 @@ function ProveedorPage() {
     return salesCartItems.reduce((sum, item) => sum + (item.qty * item.price), 0);
   }, [salesCartItems]);
 
+  const commissionSummary = useMemo(() => {
+    let totalQty = 0;
+    let totalVentaConIva = 0;
+    let totalVentaSinIva = 0;
+    let totalComision = 0;
+    let totalIvaComision = 0;
+    let totalRetefuente = 0;
+    let totalTotalComision = 0;
+    let totalTotalReembolsar = 0;
+
+    salesCartItems.forEach((item) => {
+      const ventaConIva = item.qty * item.price;
+      const ventaSinIva = Math.round(ventaConIva / 1.19);
+      const comision = Math.round(ventaSinIva * (commPercent / 100));
+      const ivaComision = Math.round(comision * 0.19);
+      const retefuente = Math.round(comision * 0.11);
+      const rowTotalComision = comision + ivaComision - retefuente;
+      const rowTotalReembolsar = ventaConIva - rowTotalComision;
+
+      totalQty += item.qty;
+      totalVentaConIva += ventaConIva;
+      totalVentaSinIva += ventaSinIva;
+      totalComision += comision;
+      totalIvaComision += ivaComision;
+      totalRetefuente += retefuente;
+      totalTotalComision += rowTotalComision;
+      totalTotalReembolsar += rowTotalReembolsar;
+    });
+
+    return {
+      commPercent,
+      totalQty,
+      totalVentaConIva,
+      totalVentaSinIva,
+      totalComision,
+      totalIvaComision,
+      totalRetefuente,
+      totalTotalComision,
+      totalTotalReembolsar,
+    };
+  }, [salesCartItems, commPercent]);
+
+  // Pagination Helper calculations
+  const itemsPerPage = 40;
+  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
+
+  const paginatedProducts = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return filteredProducts.slice(startIndex, startIndex + itemsPerPage);
+  }, [filteredProducts, currentPage]);
+
   const handleExport = () => {
     if (!keys.ref) {
       toast.error("No se encontró la columna de Referencia.");
       return;
     }
-    const header = [
-      "StrProducto",
-      "IntCantidaddoc",
-      "IntvalorUnitario",
-      "IntBodega",
-      "StrLote",
-      "StrColor",
-    ];
-    const data: (string | number)[][] = [header];
-    for (const r of inv.rows) {
-      const qty = inv.sales[r.__id];
-      if (!qty || qty <= 0) continue;
-      data.push([
-        String(r[keys.ref!] ?? ""),
-        qty,
-        0,
-        "01",
-        keys.size ? String(r[keys.size] ?? "") : "",
-        keys.color ? String(r[keys.color] ?? "") : "",
-      ]);
-    }
-    if (data.length === 1) {
+    if (salesCartItems.length === 0) {
       toast.error("No hay ventas para exportar.");
       return;
     }
-    const ws = XLSX.utils.aoa_to_sheet(data);
-    const range = XLSX.utils.decode_range(ws["!ref"]!);
-    const textCols = [0, 3, 4, 5];
-    for (let R = 1; R <= range.e.r; R++) {
-      for (const C of textCols) {
-        const addr = XLSX.utils.encode_cell({ r: R, c: C });
-        const cell = ws[addr];
-        if (cell) {
-          cell.t = "s";
-          cell.v = String(cell.v);
-        }
-      }
+
+    // Generate Excel data
+    const exportItems = salesCartItems.map(item => ({
+      ref: item.ref,
+      qty: item.qty,
+      size: keys.size ? String(item.row[keys.size] ?? "") : "",
+      color: keys.color ? String(item.row[keys.color] ?? "") : "",
+    }));
+
+    // Generate and download
+    generateSalesExcel(exportItems, warehouseId, user?.name || user?.email || "vendedor");
+
+    // Add to export logs
+    const loggedItems = salesCartItems.map(item => ({
+      __id: item.row.__id,
+      ref: item.ref,
+      name: item.name,
+      variantDesc: item.variantDesc,
+      qty: item.qty,
+      price: item.price,
+      stock: item.stock,
+      size: keys.size ? String(item.row[keys.size] ?? "") : "",
+      color: keys.color ? String(item.row[keys.color] ?? "") : "",
+    }));
+    addExportLog(user?.email || "", warehouseId, commPercent, loggedItems);
+
+    // Reset current sales
+    if (user) {
+      resetSales(user.email);
     }
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "TblDetalleDocumentos");
-    const stamp = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(wb, `REPORTE_VENTAS_${user?.name?.toUpperCase()}_${stamp}.xls`, { bookType: "biff8" });
-    toast.success("¡Reporte de ventas exportado!");
+    toast.success("Ventas exportadas y archivadas en el historial.");
+  };
+
+  const handleExportCommissions = () => {
+    if (!keys.ref) {
+      toast.error("No se encontró la columna de Referencia.");
+      return;
+    }
+    if (salesCartItems.length === 0) {
+      toast.error("No hay ventas para exportar.");
+      return;
+    }
+
+    // Generate Excel data
+    const exportItems = salesCartItems.map(item => ({
+      ref: item.ref,
+      name: item.name,
+      size: keys.size ? String(item.row[keys.size] ?? "") : "",
+      color: keys.color ? String(item.row[keys.color] ?? "") : "",
+      qty: item.qty,
+      price: item.price,
+    }));
+
+    // Generate and download
+    generateCommissionsExcel(exportItems, commPercent, user?.name || user?.email || "vendedor");
+
+    // Add to export logs
+    const loggedItems = salesCartItems.map(item => ({
+      __id: item.row.__id,
+      ref: item.ref,
+      name: item.name,
+      variantDesc: item.variantDesc,
+      qty: item.qty,
+      price: item.price,
+      stock: item.stock,
+      size: keys.size ? String(item.row[keys.size] ?? "") : "",
+      color: keys.color ? String(item.row[keys.color] ?? "") : "",
+    }));
+    addExportLog(user?.email || "", warehouseId, commPercent, loggedItems);
+
+    // Reset current sales
+    if (user) {
+      resetSales(user.email);
+    }
+    toast.success("Liquidación exportada y archivada en el historial.");
   };
 
   const handleIncrement = (id: string, currentVal: number, stock: number | null) => {
@@ -321,7 +462,7 @@ function ProveedorPage() {
         </div>
       </div>
 
-      <main className="max-w-2xl mx-auto px-4 pt-6 space-y-6">
+      <main className="max-w-7xl mx-auto px-4 pt-6 space-y-6">
 
         {/* TAB 1: E-COMMERCE REGISTRATION VIEW */}
         {activeTab === "register" && (
@@ -374,23 +515,78 @@ function ProveedorPage() {
                 </p>
               </div>
             ) : (
-              <div className="grid gap-6 sm:grid-cols-2">
-                {filteredProducts.map((product) => {
-                  return (
-                    <ProductVirtualCard
-                      key={product.key}
-                      product={product}
-                      keys={keys}
-                      inv={inv}
-                      user={user}
-                      selectedVariants={selectedVariants}
-                      setSelectedVariants={setSelectedVariants}
-                      handleIncrement={handleIncrement}
-                      handleDecrement={handleDecrement}
-                    />
-                  );
-                })}
-              </div>
+              <>
+                <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+                  {paginatedProducts.map((product) => {
+                    return (
+                      <ProductVirtualCard
+                        key={product.key}
+                        product={product}
+                        keys={keys}
+                        inv={inv}
+                        user={user}
+                        selectedVariants={selectedVariants}
+                        setSelectedVariants={setSelectedVariants}
+                        handleIncrement={handleIncrement}
+                        handleDecrement={handleDecrement}
+                      />
+                    );
+                  })}
+                </div>
+
+                {/* PAGINATION CONTROLS */}
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-center gap-2 pt-6 pb-2 animate-in fade-in duration-300">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-9 w-9 rounded-xl border-border bg-card text-foreground hover:bg-accent disabled:opacity-50"
+                      onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                      disabled={currentPage === 1}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => {
+                      const isCurrent = page === currentPage;
+                      const isNear = Math.abs(page - currentPage) <= 1;
+                      const isFirstOrLast = page === 1 || page === totalPages;
+
+                      if (!isNear && !isFirstOrLast) {
+                        if (page === 2 || page === totalPages - 1) {
+                          return <span key={page} className="px-1 text-muted-foreground text-xs font-semibold">...</span>;
+                        }
+                        return null;
+                      }
+
+                      return (
+                        <Button
+                          key={page}
+                          variant={isCurrent ? "default" : "outline"}
+                          className={`h-9 w-9 text-xs font-bold rounded-xl ${
+                            isCurrent
+                              ? "bg-primary text-primary-foreground shadow-xs font-black"
+                              : "border-border bg-card text-muted-foreground hover:text-foreground"
+                          }`}
+                          onClick={() => setCurrentPage(page)}
+                        >
+                          {page}
+                        </Button>
+                      );
+                    })}
+
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-9 w-9 rounded-xl border-border bg-card text-foreground hover:bg-accent disabled:opacity-50"
+                      onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                      disabled={currentPage === totalPages}
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
+              </>
             )}
 
           </div>
@@ -398,7 +594,7 @@ function ProveedorPage() {
 
         {/* TAB 2: DETAILED SALES REPORT VIEW */}
         {activeTab === "report" && (
-          <div className="space-y-4">
+          <div className="max-w-2xl mx-auto space-y-4">
             
             <Card className="border-border/80 shadow-md bg-white dark:bg-neutral-900 rounded-2xl overflow-hidden">
               <CardHeader className="bg-neutral-50 dark:bg-muted/15 border-b border-border p-4 flex flex-row items-center justify-between">
@@ -497,6 +693,54 @@ function ProveedorPage() {
                         </div>
                       )}
                       
+                      {keys.price && commPercent > 0 && (
+                        <div className="pt-3 border-t border-dashed border-border mt-3 space-y-2">
+                          <p className="text-2xs font-extrabold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
+                            Liquidación de Comisiones ({commPercent}%)
+                          </p>
+                          <div className="grid grid-cols-2 gap-2 text-2xs">
+                            <div className="flex justify-between text-muted-foreground">
+                              <span>Venta Sin IVA (base):</span>
+                              <span className="font-semibold text-foreground">
+                                ${commissionSummary.totalVentaSinIva.toLocaleString()}
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-muted-foreground">
+                              <span>Comisión base:</span>
+                              <span className="font-semibold text-foreground">
+                                ${commissionSummary.totalComision.toLocaleString()}
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-muted-foreground">
+                              <span>IVA Comisión (19%):</span>
+                              <span className="font-semibold text-foreground">
+                                +${commissionSummary.totalIvaComision.toLocaleString()}
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-muted-foreground">
+                              <span>Retefuente (11%):</span>
+                              <span className="font-semibold text-destructive">
+                                -${commissionSummary.totalRetefuente.toLocaleString()}
+                              </span>
+                            </div>
+                          </div>
+                          
+                          <div className="pt-2 border-t border-border/50 flex justify-between text-xs font-bold">
+                            <span className="text-indigo-600 dark:text-indigo-400">Total Comisión Ganada:</span>
+                            <span className="text-indigo-600 dark:text-indigo-400">
+                              ${commissionSummary.totalTotalComision.toLocaleString()}
+                            </span>
+                          </div>
+                          
+                          <div className="flex justify-between text-xs font-bold">
+                            <span className="text-foreground">Total a Reembolsar a Marca:</span>
+                            <span className="text-foreground">
+                              ${commissionSummary.totalTotalReembolsar.toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                      
                       {salesCartItems.some(item => item.stock !== null && item.qty > item.stock) && (
                         <div className="flex items-center gap-2 p-2.5 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/30 rounded-xl text-red-600 dark:text-red-400 text-3xs font-semibold">
                           <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -511,8 +755,18 @@ function ProveedorPage() {
                         className="w-full h-12 font-bold text-sm gap-2 rounded-xl shadow-sm bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
                       >
                         <FileSpreadsheet className="h-5 w-5" />
-                        Descargar Reporte en Excel (.xls)
+                        Descargar Reporte de Ventas (.xls)
                       </Button>
+
+                      {commPercent > 0 && (
+                        <Button
+                          onClick={handleExportCommissions}
+                          className="w-full h-12 font-bold text-sm gap-2 rounded-xl shadow-sm bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer"
+                        >
+                          <FileSpreadsheet className="h-5 w-5" />
+                          Descargar Liquidación de Comisiones (.xls)
+                        </Button>
+                      )}
 
                       {isResetConfirmOpen ? (
                         <div className="p-3 rounded-xl border border-red-200 dark:border-red-950 bg-red-50/40 dark:bg-red-950/10 flex items-center justify-between">
@@ -548,6 +802,71 @@ function ProveedorPage() {
                       )}
                     </div>
                   </>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* HISTORIAL DE EXPORTACIONES */}
+            <Card className="border-border/80 shadow-md bg-white dark:bg-neutral-900 rounded-2xl overflow-hidden">
+              <CardHeader className="bg-neutral-50 dark:bg-muted/15 border-b border-border p-4 flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle className="text-sm font-bold flex items-center gap-1.5">
+                    <History className="h-4.5 w-4.5 text-primary" />
+                    Historial de Exportaciones
+                  </CardTitle>
+                  <CardDescription className="text-3xs">Registro de reportes descargados y archivados</CardDescription>
+                </div>
+              </CardHeader>
+              <CardContent className="p-4">
+                {myLogs.length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-6">No hay reportes exportados en el historial.</p>
+                ) : (
+                  <div className="divide-y divide-border/50 max-h-[300px] overflow-y-auto pr-1">
+                    {myLogs.map((log) => (
+                      <div key={log.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                        <div className="space-y-1">
+                          <p className="font-bold text-foreground">
+                            {new Date(log.timestamp).toLocaleString("es-CO", { dateStyle: "short", timeStyle: "short" })}
+                          </p>
+                          <p className="text-3xs text-muted-foreground">
+                            <strong>{log.totalUnits}</strong> {log.totalUnits === 1 ? "unidad" : "unidades"} · 
+                            Valor: <strong>${log.totalAmount.toLocaleString("es-CO")}</strong>
+                            {log.commissionPercent > 0 && ` · Comisión: ${log.commissionPercent}%`}
+                          </p>
+                        </div>
+                        <div className="flex gap-2 shrink-0">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleDownloadSalesFromLog(log)}
+                            className="h-8 text-3xs font-bold gap-1 rounded-lg border-emerald-600/30 text-emerald-700 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20"
+                          >
+                            <FileSpreadsheet className="h-3.5 w-3.5" />
+                            Ventas
+                          </Button>
+                          {log.commissionPercent > 0 && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleDownloadCommissionsFromLog(log)}
+                              className="h-8 text-3xs font-bold gap-1 rounded-lg border-indigo-600/30 text-indigo-700 hover:bg-indigo-50/50 dark:hover:bg-indigo-950/20"
+                            >
+                              <FileSpreadsheet className="h-3.5 w-3.5" />
+                              Comisiones
+                            </Button>
+                          )}
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => handleDeleteLog(log.id)}
+                            className="h-8 w-8 text-muted-foreground hover:text-red-500 hover:bg-red-500/5 rounded-lg"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -615,13 +934,13 @@ function ProductVirtualCard({
   handleIncrement: (id: string, currentVal: number, stock: number | null) => void;
   handleDecrement: (id: string, currentVal: number) => void;
 }) {
-  // Extract unique colors and sizes for selector
+  // Extract unique colors and sizes for selector (keeping empty values as selectable options)
   const uniqueColors = useMemo(() => {
-    return Array.from(new Set(product.variants.map((v) => keys.color ? String(v[keys.color] ?? "") : "").filter(Boolean)));
+    return Array.from(new Set(product.variants.map((v) => keys.color ? String(v[keys.color] ?? "").trim() : "")));
   }, [product.variants, keys.color]);
 
   const uniqueSizes = useMemo(() => {
-    return Array.from(new Set(product.variants.map((v) => keys.size ? String(v[keys.size] ?? "") : "").filter(Boolean)));
+    return Array.from(new Set(product.variants.map((v) => keys.size ? String(v[keys.size] ?? "").trim() : "")));
   }, [product.variants, keys.size]);
 
   // Current selections
@@ -742,58 +1061,62 @@ function ProductVirtualCard({
         <div className="space-y-3.5">
           
           {/* COLOR SELECTOR */}
-          {uniqueColors.length > 1 && (
+          {uniqueColors.length > 0 && (
             <div className="space-y-1">
               <p className="text-3xs text-muted-foreground font-bold uppercase tracking-wider">
                 Color: <span className="text-foreground normal-case font-black">{translateColor(activeColor)}</span>
               </p>
-              <div className="flex flex-wrap gap-1.5 pt-0.5">
-                {uniqueColors.map((color) => {
-                  const isActive = color === activeColor;
-                  return (
-                    <button
-                      key={color}
-                      onClick={() => handleColorSelect(color)}
-                      className={`text-3xs px-2.5 py-1 rounded-full border font-bold transition-all truncate max-w-[120px] ${
-                        isActive
-                          ? "bg-primary/10 border-primary/45 text-primary"
-                          : "bg-background border-border text-muted-foreground hover:text-foreground"
-                      }`}
-                      type="button"
-                    >
-                      {translateColor(color)}
-                    </button>
-                  );
-                })}
-              </div>
+              {uniqueColors.length > 1 && (
+                <div className="flex flex-wrap gap-1.5 pt-0.5">
+                  {uniqueColors.map((color) => {
+                    const isActive = color === activeColor;
+                    return (
+                      <button
+                        key={color}
+                        onClick={() => handleColorSelect(color)}
+                        className={`text-3xs px-2.5 py-1 rounded-full border font-bold transition-all truncate max-w-[120px] ${
+                          isActive
+                            ? "bg-primary/10 border-primary/45 text-primary"
+                            : "bg-background border-border text-muted-foreground hover:text-foreground"
+                        }`}
+                        type="button"
+                      >
+                        {translateColor(color)}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
           {/* SIZE SELECTOR */}
-          {uniqueSizes.length > 1 && (
+          {uniqueSizes.length > 0 && (
             <div className="space-y-1">
               <p className="text-3xs text-muted-foreground font-bold uppercase tracking-wider">
-                Talla seleccionada: <span className="text-foreground normal-case font-black">{activeSize}</span>
+                Talla seleccionada: <span className="text-foreground normal-case font-black">{activeSize || "Única"}</span>
               </p>
-              <div className="flex flex-wrap gap-1.5 pt-0.5">
-                {uniqueSizes.map((size) => {
-                  const isActive = size === activeSize;
-                  return (
-                    <button
-                      key={size}
-                      onClick={() => handleSizeSelect(size)}
-                      className={`w-9 h-9 rounded-xl border text-2xs font-extrabold transition-all flex items-center justify-center ${
-                        isActive
-                          ? "bg-primary border-primary text-primary-foreground shadow-2xs font-black"
-                          : "bg-background border-border text-muted-foreground hover:text-foreground"
-                      }`}
-                      type="button"
-                    >
-                      {size}
-                    </button>
-                  );
-                })}
-              </div>
+              {uniqueSizes.length > 1 && (
+                <div className="flex flex-wrap gap-1.5 pt-0.5">
+                  {uniqueSizes.map((size) => {
+                    const isActive = size === activeSize;
+                    return (
+                      <button
+                        key={size}
+                        onClick={() => handleSizeSelect(size)}
+                        className={`w-9 h-9 rounded-xl border text-2xs font-extrabold transition-all flex items-center justify-center ${
+                          isActive
+                            ? "bg-primary border-primary text-primary-foreground shadow-2xs font-black"
+                            : "bg-background border-border text-muted-foreground hover:text-foreground"
+                        }`}
+                        type="button"
+                      >
+                        {size || "Única"}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 

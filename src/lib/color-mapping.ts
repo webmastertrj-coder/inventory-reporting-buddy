@@ -155,9 +155,9 @@ export const COLOR_MAP: Record<string, string> = {
 };
 
 export function translateColor(color: string | number | undefined | null): string {
-  if (color === undefined || color === null) return "";
+  if (color === undefined || color === null) return "Sin color";
   const code = String(color).trim();
-  if (!code) return "";
+  if (!code) return "Sin color";
 
   // Try exact match
   if (COLOR_MAP[code]) {
@@ -179,4 +179,36 @@ export function translateColor(color: string | number | undefined | null): strin
   }
 
   return code;
+}
+
+export function getColorCode(colorName: string | number | undefined | null): string {
+  if (colorName === undefined || colorName === null) return "";
+  const name = String(colorName).trim().toLowerCase();
+  if (!name || name === "sin color" || name === "no disponible") return "";
+
+  // If it's already a valid code key in COLOR_MAP, return it directly
+  if (COLOR_MAP[colorName] || COLOR_MAP[String(colorName).toLowerCase()]) {
+    return String(colorName).trim();
+  }
+
+  // Handle single digit padded checks
+  if (typeof colorName === "number" || /^\d+$/.test(String(colorName))) {
+    const padded = String(colorName).padStart(2, "0");
+    if (COLOR_MAP[padded]) return padded;
+  }
+
+  // Reverse lookup to find the code matching the color name
+  let matchedCode = "";
+  for (const [code, val] of Object.entries(COLOR_MAP)) {
+    if (val.toLowerCase() === name) {
+      // Prioritize 2-digit codes (e.g. "01" over "1")
+      if (code.length === 2) {
+        return code;
+      }
+      matchedCode = code;
+    }
+  }
+
+  if (matchedCode) return matchedCode;
+  return String(colorName).trim();
 }

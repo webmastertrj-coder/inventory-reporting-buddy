@@ -7,9 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { setInventory, useInventory, clearSellerInventory, resetSales, detectKeyColumns, type InventoryRow, parsePrice } from "@/lib/inventory-store";
+import { setInventory, useInventory, clearSellerInventory, resetSales, detectKeyColumns, type InventoryRow, parsePrice, useExportLogs, deleteExportLog } from "@/lib/inventory-store";
 import { useAuth } from "@/lib/auth-store";
-import { translateColor } from "@/lib/color-mapping";
+import { translateColor, getColorCode } from "@/lib/color-mapping";
+import { generateSalesExcel, generateCommissionsExcel } from "@/lib/excel-helpers";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -26,7 +27,7 @@ export const Route = createFileRoute("/")({
 });
 
 function Index() {
-  const { user, loading: authLoading, logout, sellers, addSeller, updateSellerCommission } = useAuth();
+  const { user, loading: authLoading, logout, sellers, addSeller, updateSellerCommission, updateSellerWarehouseId } = useAuth();
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileLoading, setFileLoading] = useState(false);
@@ -34,14 +35,49 @@ function Index() {
   const [newSellerName, setNewSellerName] = useState("");
   const [newSellerEmail, setNewSellerEmail] = useState("");
   const [newSellerCommission, setNewSellerCommission] = useState("10");
+  const [newSellerWarehouseId, setNewSellerWarehouseId] = useState("01");
   const [showAddForm, setShowAddForm] = useState(false);
 
   // States for editing commission
   const [isEditingCommission, setIsEditingCommission] = useState(false);
   const [editCommissionValue, setEditCommissionValue] = useState("10");
 
+  // States for editing warehouse
+  const [isEditingWarehouse, setIsEditingWarehouse] = useState(false);
+  const [editWarehouseValue, setEditWarehouseValue] = useState("01");
+
   // Hook to get the inventory of the selected seller
   const selectedInv = useInventory(selectedSellerEmail);
+  const allLogs = useExportLogs();
+
+  const handleDownloadSalesFromLog = (log: any) => {
+    const exportItems = log.items.map((item: any) => ({
+      ref: item.ref,
+      qty: item.qty,
+      size: item.size,
+      color: item.color,
+    }));
+    generateSalesExcel(exportItems, log.warehouseId, log.sellerEmail.split("@")[0]);
+    toast.success("Reporte de ventas descargado del historial.");
+  };
+
+  const handleDownloadCommissionsFromLog = (log: any) => {
+    const exportItems = log.items.map((item: any) => ({
+      ref: item.ref,
+      name: item.name,
+      size: item.size,
+      color: item.color,
+      qty: item.qty,
+      price: item.price,
+    }));
+    generateCommissionsExcel(exportItems, log.commissionPercent, log.sellerEmail.split("@")[0]);
+    toast.success("Liquidación de comisiones descargada del historial.");
+  };
+
+  const handleDeleteLog = (logId: string) => {
+    deleteExportLog(logId);
+    toast.success("Registro de exportación eliminado.");
+  };
 
   // Guard routing
   useEffect(() => {
@@ -67,13 +103,14 @@ function Index() {
       toast.error("Por favor completa el nombre y el correo.");
       return;
     }
-    const success = addSeller(newSellerName, newSellerEmail, Number(newSellerCommission) || 0);
+    const success = addSeller(newSellerName, newSellerEmail, Number(newSellerCommission) || 0, newSellerWarehouseId);
     if (success) {
       toast.success(`Vendedor "${newSellerName}" registrado con éxito. Contraseña por defecto: vendedor123`);
       setSelectedSellerEmail(newSellerEmail);
       setNewSellerName("");
       setNewSellerEmail("");
       setNewSellerCommission("10");
+      setNewSellerWarehouseId("01");
       setShowAddForm(false);
     } else {
       toast.error("Este vendedor ya existe en el sistema.");
@@ -95,6 +132,21 @@ function Index() {
     }
   };
 
+  const handleSaveWarehouse = () => {
+    const val = editWarehouseValue.trim();
+    if (!val || val.length > 2) {
+      toast.error("Por favor ingresa un ID de bodega válido de hasta 2 dígitos.");
+      return;
+    }
+    const success = updateSellerWarehouseId(selectedSellerEmail, val);
+    if (success) {
+      toast.success("Bodega actualizada con éxito.");
+      setIsEditingWarehouse(false);
+    } else {
+      toast.error("No se pudo actualizar la bodega.");
+    }
+  };
+
   const handleFile = async (file: File) => {
     if (!selectedSellerEmail) {
       toast.error("Selecciona un vendedor primero.");
@@ -112,18 +164,31 @@ function Index() {
       }
       const columns = Object.keys(json[0]);
       const tempKeys = detectKeyColumns(columns);
-      const rows: InventoryRow[] = json.map((r, i) => {
-        const refPart = tempKeys.ref ? String(r[tempKeys.ref] ?? "") : "";
-        const colorPart = tempKeys.color ? String(r[tempKeys.color] ?? "") : "";
-        const sizePart = tempKeys.size ? String(r[tempKeys.size] ?? "") : "";
+      const mergedRowsMap: Record<string, InventoryRow> = {};
+      
+      json.forEach((r, i) => {
+        const refPart = tempKeys.ref ? String(r[tempKeys.ref] ?? "").trim() : "";
+        const colorPart = tempKeys.color ? String(r[tempKeys.color] ?? "").trim() : "";
+        const sizePart = tempKeys.size ? String(r[tempKeys.size] ?? "").trim() : "";
         const stableId = (refPart || colorPart || sizePart)
           ? `row_${refPart}_${colorPart}_${sizePart}`.replace(/\s+/g, "_")
           : `row_${i}`;
-        return {
-          ...(r as Record<string, string | number>),
-          __id: stableId,
-        };
+
+        if (mergedRowsMap[stableId]) {
+          if (tempKeys.stock) {
+            const existingStock = Number(mergedRowsMap[stableId][tempKeys.stock]) || 0;
+            const newStock = Number(r[tempKeys.stock]) || 0;
+            mergedRowsMap[stableId][tempKeys.stock] = existingStock + newStock;
+          }
+        } else {
+          mergedRowsMap[stableId] = {
+            ...(r as Record<string, string | number>),
+            __id: stableId,
+          };
+        }
       });
+
+      const rows = Object.values(mergedRowsMap);
       setInventory(selectedSellerEmail, columns, rows);
       toast.success(`Inventario cargado: ${rows.length} productos para ${selectedSellerEmail}`);
     } catch (e) {
@@ -156,13 +221,14 @@ function Index() {
     for (const r of selectedInv.rows) {
       const qty = selectedInv.sales[r.__id];
       if (!qty || qty <= 0) continue;
+      const rawColor = keys.color ? String(r[keys.color] ?? "") : "";
       data.push([
         String(r[keys.ref!] ?? ""),
         qty,
         0,
-        "01",
+        activeSellerObj?.warehouseId ?? "01",
         keys.size ? String(r[keys.size] ?? "") : "",
-        keys.color ? String(r[keys.color] ?? "") : "",
+        getColorCode(rawColor),
       ]);
     }
     if (data.length === 1) {
@@ -492,6 +558,18 @@ function Index() {
                         required
                       />
                     </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="sellerWarehouseId" className="text-xs">Bodega ID (2 dígitos)</Label>
+                      <Input
+                        id="sellerWarehouseId"
+                        placeholder="Ej. 01"
+                        maxLength={2}
+                        value={newSellerWarehouseId}
+                        onChange={(e) => setNewSellerWarehouseId(e.target.value.replace(/\D/g, "").slice(0, 2))}
+                        className="h-8 text-xs"
+                        required
+                      />
+                    </div>
                     <div className="flex justify-end gap-2 pt-1">
                       <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setShowAddForm(false)}>
                         Cancelar
@@ -522,6 +600,77 @@ function Index() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* HISTORIAL GLOBAL DE EXPORTACIONES */}
+            <Card className="border-border/60 shadow-md">
+              <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
+                <div>
+                  <CardTitle className="text-sm font-bold flex items-center gap-1.5">
+                    <FileText className="h-4 w-4 text-primary" />
+                    Historial de Ventas
+                  </CardTitle>
+                  <CardDescription className="text-3xs">Reportes de ventas exportados por vendedores</CardDescription>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {allLogs.length === 0 ? (
+                  <p className="text-center text-xs text-muted-foreground py-6">No hay registros de exportación aún.</p>
+                ) : (
+                  <div className="space-y-2.5 max-h-[350px] overflow-y-auto pr-1">
+                    {allLogs.map((log) => {
+                      const seller = sellers.find(s => s.email.toLowerCase() === log.sellerEmail.toLowerCase());
+                      return (
+                        <div key={log.id} className="p-3 border border-border/50 rounded-lg hover:bg-muted/10 transition-colors space-y-2 text-xs">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="font-extrabold text-foreground">{seller?.name || log.sellerEmail.split("@")[0]}</p>
+                              <p className="text-3xs text-muted-foreground">
+                                {new Date(log.timestamp).toLocaleString("es-CO", { dateStyle: "short", timeStyle: "short" })}
+                              </p>
+                            </div>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => handleDeleteLog(log.id)}
+                              className="h-6 w-6 text-muted-foreground hover:text-red-500 hover:bg-red-500/5 rounded-md"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                          <div className="text-3xs text-muted-foreground flex justify-between bg-muted/40 p-2 rounded-md">
+                            <span>Cant: <strong>{log.totalUnits} uds</strong></span>
+                            <span>Valor: <strong>${log.totalAmount.toLocaleString("es-CO")}</strong></span>
+                            {log.commissionPercent > 0 && <span>Com: <strong>{log.commissionPercent}%</strong></span>}
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleDownloadSalesFromLog(log)}
+                              className="h-7 w-full text-3xs font-bold gap-1 rounded-md border-emerald-600/30 text-emerald-700 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20"
+                            >
+                              <FileSpreadsheet className="h-3.5 w-3.5" />
+                              Ventas
+                            </Button>
+                            {log.commissionPercent > 0 && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleDownloadCommissionsFromLog(log)}
+                                className="h-7 w-full text-3xs font-bold gap-1 rounded-md border-indigo-600/30 text-indigo-700 hover:bg-indigo-50/50 dark:hover:bg-indigo-950/20"
+                              >
+                                <FileSpreadsheet className="h-3.5 w-3.5" />
+                                Comisiones
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </div>
 
           {/* Main Panel: Seller Inventory Actions - 8 columns */}
@@ -537,8 +686,9 @@ function Index() {
                       <h2 className="text-xl font-bold text-foreground">{activeSellerObj.name}</h2>
                     </div>
                     <p className="text-sm text-muted-foreground mt-0.5">{activeSellerObj.email}</p>
-                    <div className="flex items-center gap-3 mt-2 flex-wrap">
-                      <p className="text-xs text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                    <div className="flex items-center gap-3 mt-2 flex-wrap text-xs text-muted-foreground">
+                      {/* Comisión Edit block */}
+                      <div className="flex items-center gap-1.5">
                         <span>Comisión:</span>
                         {isEditingCommission ? (
                           <span className="inline-flex items-center gap-1.5">
@@ -585,7 +735,56 @@ function Index() {
                             </button>
                           </span>
                         )}
-                      </p>
+                      </div>
+
+                      <span className="h-3 w-px bg-border hidden sm:block" />
+
+                      {/* Bodega Edit block */}
+                      <div className="flex items-center gap-1.5">
+                        <span>Bodega:</span>
+                        {isEditingWarehouse ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <Input
+                              type="text"
+                              maxLength={2}
+                              value={editWarehouseValue}
+                              onChange={(e) => setEditWarehouseValue(e.target.value.replace(/\D/g, "").slice(0, 2))}
+                              className="h-7 w-12 text-xs py-0 px-2 border-border/80 bg-background"
+                              required
+                            />
+                            <Button
+                              size="sm"
+                              className="h-7 px-2 py-0 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold gap-1 rounded-md"
+                              onClick={handleSaveWarehouse}
+                            >
+                              Guardar
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 py-0 text-xs font-medium text-muted-foreground hover:bg-accent rounded-md"
+                              onClick={() => setIsEditingWarehouse(false)}
+                            >
+                              Cancelar
+                            </Button>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="font-extrabold text-foreground bg-indigo-50 text-indigo-600 dark:bg-indigo-950/20 dark:text-indigo-400 px-2 py-0.5 rounded text-2xs border border-indigo-150">
+                              {activeSellerObj.warehouseId ?? "01"}
+                            </span>
+                            <button
+                              onClick={() => {
+                                setEditWarehouseValue(activeSellerObj.warehouseId ?? "01");
+                                setIsEditingWarehouse(true);
+                              }}
+                              className="text-xs text-primary hover:underline font-bold"
+                            >
+                              Editar
+                            </button>
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                   {selectedInv.uploadedAt ? (
@@ -798,7 +997,7 @@ function SellerListItem({
   isSelected,
   onSelect,
 }: {
-  seller: { email: string; name: string; commission?: number };
+  seller: { email: string; name: string; commission?: number; warehouseId?: string };
   isSelected: boolean;
   onSelect: () => void;
 }) {
@@ -818,7 +1017,9 @@ function SellerListItem({
         <p className={`font-semibold text-xs truncate ${isSelected ? "text-primary" : "text-foreground"}`}>
           {seller.name} {seller.commission !== undefined && `(${seller.commission}%)`}
         </p>
-        <p className="text-2xs text-muted-foreground truncate">{seller.email}</p>
+        <p className="text-2xs text-muted-foreground truncate">
+          Bodega: {seller.warehouseId ?? "01"} • {seller.email}
+        </p>
       </div>
       <div className="shrink-0">
         {hasInventory ? (

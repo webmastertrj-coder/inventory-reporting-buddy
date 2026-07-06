@@ -9,8 +9,32 @@ export interface SellerInventory {
   sales: Record<string, number>; // __id -> units sold
 }
 
+export interface ExportLogItem {
+  __id: string;
+  ref: string;
+  name: string;
+  variantDesc: string;
+  qty: number;
+  price: number;
+  stock: number | null;
+  size: string;
+  color: string;
+}
+
+export interface ExportLog {
+  id: string;
+  sellerEmail: string;
+  timestamp: string;
+  totalUnits: number;
+  totalAmount: number;
+  commissionPercent: number;
+  warehouseId: string;
+  items: ExportLogItem[];
+}
+
 export interface InventoryState {
   sellers: Record<string, SellerInventory>; // sellerEmail -> SellerInventory
+  exportLogs?: ExportLog[];
 }
 
 const KEY = "inv_state_v2"; // Increment version for safe migrations
@@ -24,7 +48,64 @@ const initialSellerInventory: SellerInventory = {
 
 const initial: InventoryState = {
   sellers: {},
+  exportLogs: [],
 };
+
+function migrateState(loaded: any): InventoryState {
+  if (!loaded || !loaded.sellers) return loaded;
+  
+  let changed = false;
+  const sellers = { ...loaded.sellers };
+
+  for (const email of Object.keys(sellers)) {
+    const inv = sellers[email];
+    if (!inv || !inv.rows || !inv.rows.length) continue;
+
+    // Check if any row has an invalid ID or if there are duplicate IDs in the list
+    const ids = inv.rows.map((r: any) => r.__id);
+    const hasDuplicates = ids.length !== new Set(ids).size;
+    const hasBadId = inv.rows.some((r: any) => !r.__id || r.__id.startsWith("row__"));
+
+    if (hasBadId || hasDuplicates) {
+      const tempKeys = detectKeyColumns(inv.columns);
+      const mergedRowsMap: Record<string, any> = {};
+
+      inv.rows.forEach((r: any, i: number) => {
+        const refPart = tempKeys.ref ? String(r[tempKeys.ref] ?? "").trim() : "";
+        const colorPart = tempKeys.color ? String(r[tempKeys.color] ?? "").trim() : "";
+        const sizePart = tempKeys.size ? String(r[tempKeys.size] ?? "").trim() : "";
+        const stableId = (refPart || colorPart || sizePart)
+          ? `row_${refPart}_${colorPart}_${sizePart}`.replace(/\s+/g, "_")
+          : `row_${i}`;
+
+        if (mergedRowsMap[stableId]) {
+          if (tempKeys.stock) {
+            const existingStock = Number(mergedRowsMap[stableId][tempKeys.stock]) || 0;
+            const newStock = Number(r[tempKeys.stock]) || 0;
+            mergedRowsMap[stableId][tempKeys.stock] = existingStock + newStock;
+          }
+        } else {
+          mergedRowsMap[stableId] = {
+            ...r,
+            __id: stableId,
+          };
+        }
+      });
+
+      sellers[email] = {
+        ...inv,
+        rows: Object.values(mergedRowsMap),
+        sales: {}, // Reset sales as they are corrupted/colliding anyway due to clashing
+      };
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    return { ...loaded, sellers };
+  }
+  return loaded;
+}
 
 let state: InventoryState = load();
 const listeners = new Set<() => void>();
@@ -34,7 +115,14 @@ function load(): InventoryState {
   try {
     const raw = window.localStorage.getItem(KEY);
     if (!raw) return initial;
-    return { ...initial, ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw);
+    const migrated = migrateState(parsed);
+    
+    // Persist migrated state if changes were made
+    if (JSON.stringify(migrated) !== JSON.stringify(parsed)) {
+      window.localStorage.setItem(KEY, JSON.stringify(migrated));
+    }
+    return migrated;
   } catch {
     return initial;
   }
@@ -119,29 +207,42 @@ export function useInventory(sellerEmail: string): SellerInventory {
   return globalState.sellers[sellerEmail.toLowerCase()] || initialSellerInventory;
 }
 
+export function useExportLogs(): ExportLog[] {
+  const globalState = useSyncExternalStore(
+    (cb) => {
+      listeners.add(cb);
+      return () => listeners.delete(cb);
+    },
+    () => state,
+    () => initial,
+  );
+
+  return globalState.exportLogs || [];
+}
+
 /** Try to find a sensible "name" and "sku" column heuristically */
 export function detectKeyColumns(columns: string[]) {
-  const lower = columns.map((c) => c.toLowerCase());
+  const trimmedCols = columns.map((c) => c.trim());
+  const lower = trimmedCols.map((c) => c.toLowerCase());
   
-  // Explicitly search for "strproducto" or standard ref keys
-  const strProductIdx = lower.findIndex((c) => c === "strproducto");
-  const refCol = strProductIdx >= 0 
-    ? columns[strProductIdx] 
-    : (lower.findIndex((c) => ["referencia", "ref", "modelo"].some((n) => c.includes(n))) >= 0 
-        ? columns[lower.findIndex((c) => ["referencia", "ref", "modelo"].some((n) => c.includes(n)))] 
-        : null);
-
   const find = (needles: string[], exclude: string | null = null) => {
     const idx = lower.findIndex((c, i) => 
-      columns[i] !== exclude && needles.some((n) => c.includes(n))
+      trimmedCols[i] !== exclude && needles.some((n) => c.includes(n))
     );
-    return idx >= 0 ? columns[idx] : null;
+    return idx >= 0 ? trimmedCols[idx] : null;
   };
+
+  // Find refCol by searching first for strproducto, referencia, modelo
+  let refCol = find(["strproducto", "referencia", "modelo"]);
+  if (!refCol) {
+    // Robust fallbacks for other standard reference column names
+    refCol = find(["ref", "sku", "codigo", "código", "code", "producto"]);
+  }
 
   // Prioritize "pvp" for price, otherwise search standard price keys
   const pvpIdx = lower.findIndex((c) => c === "pvp" || c.includes("pvp"));
   const priceCol = pvpIdx >= 0
-    ? columns[pvpIdx]
+    ? trimmedCols[pvpIdx]
     : find(["precio", "valor", "price", "costo", "cost", "unitario"]);
 
   return {
@@ -177,4 +278,43 @@ export function parsePrice(val: any): number {
   
   const num = Number(str);
   return isNaN(num) ? 0 : num;
+}
+
+export function addExportLog(
+  sellerEmail: string,
+  warehouseId: string,
+  commissionPercent: number,
+  items: ExportLogItem[]
+) {
+  const email = sellerEmail.toLowerCase();
+  const logs = state.exportLogs || [];
+  
+  const totalUnits = items.reduce((sum, item) => sum + item.qty, 0);
+  const totalAmount = items.reduce((sum, item) => sum + item.qty * item.price, 0);
+
+  const newLog: ExportLog = {
+    id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
+    sellerEmail: email,
+    timestamp: new Date().toISOString(),
+    totalUnits,
+    totalAmount,
+    commissionPercent,
+    warehouseId,
+    items,
+  };
+
+  state = {
+    ...state,
+    exportLogs: [newLog, ...logs],
+  };
+  persist();
+}
+
+export function deleteExportLog(logId: string) {
+  const logs = state.exportLogs || [];
+  state = {
+    ...state,
+    exportLogs: logs.filter((log) => log.id !== logId),
+  };
+  persist();
 }
