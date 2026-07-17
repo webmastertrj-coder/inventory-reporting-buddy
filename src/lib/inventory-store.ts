@@ -245,20 +245,59 @@ export function setInventory(sellerEmail: string, columns: string[], rows: Inven
   state = { ...state, sellers };
   persist();
 
-  if (isCloudEnabled && supabase) {
-    supabase
-      .from("inventories")
-      .upsert({
-        seller_email: email,
-        columns,
-        rows,
-        uploaded_at: new Date().toISOString(),
-      })
-      .then(({ error }) => {
-        if (error) {
-          console.error("Error saving inventory to cloud:", error);
-          toast.error("Error al guardar inventario en la nube: " + error.message);
+  const client = supabase;
+  if (isCloudEnabled && client) {
+    let name = "Vendedor";
+    let commission = 10;
+    let warehouseId = "01";
+    try {
+      if (typeof window !== "undefined") {
+        const rawUsers = window.localStorage.getItem("auth_users_v1");
+        if (rawUsers) {
+          const parsed = JSON.parse(rawUsers);
+          const u = parsed[email];
+          if (u) {
+            name = u.name || name;
+            commission = u.commission ?? commission;
+            warehouseId = u.warehouseId ?? warehouseId;
+          }
         }
+      }
+    } catch (e) {
+      console.error("Failed to read local users for cloud sync:", e);
+    }
+
+    client
+      .from("sellers")
+      .upsert({
+        email,
+        name,
+        password: "vendedor123",
+        role: "vendedor",
+        commission,
+        warehouse_id: warehouseId,
+      })
+      .then(({ error: sellerErr }) => {
+        if (sellerErr) {
+          console.error("Error ensuring seller exists in cloud:", sellerErr);
+          toast.error("Error al registrar vendedor en la nube: " + sellerErr.message);
+          return;
+        }
+
+        client
+          .from("inventories")
+          .upsert({
+            seller_email: email,
+            columns,
+            rows,
+            uploaded_at: new Date().toISOString(),
+          })
+          .then(({ error: invErr }) => {
+            if (invErr) {
+              console.error("Error saving inventory to cloud:", invErr);
+              toast.error("Error al guardar inventario en la nube: " + invErr.message);
+            }
+          });
       });
   }
 }
