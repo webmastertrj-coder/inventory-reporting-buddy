@@ -152,7 +152,7 @@ export function setSale(sellerEmail: string, id: string, units: number) {
   const email = sellerEmail.toLowerCase();
   const sellers = { ...state.sellers };
   const sellerInv = sellers[email] || { ...initialSellerInventory };
-  const sales = { ...sellerInv.sales };
+  const sales = { ...(sellerInv.sales || {}) };
   
   if (!units || units <= 0) {
     delete sales[id];
@@ -204,7 +204,15 @@ export function useInventory(sellerEmail: string): SellerInventory {
     () => initial,
   );
 
-  return globalState.sellers[sellerEmail.toLowerCase()] || initialSellerInventory;
+  const inv = globalState.sellers[sellerEmail.toLowerCase()];
+  if (!inv) return initialSellerInventory;
+
+  return {
+    columns: inv.columns || [],
+    rows: inv.rows || [],
+    uploadedAt: inv.uploadedAt || null,
+    sales: inv.sales || {},
+  };
 }
 
 export function useExportLogs(): ExportLog[] {
