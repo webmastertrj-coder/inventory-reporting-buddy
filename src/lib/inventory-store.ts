@@ -179,19 +179,22 @@ export async function syncFromCloud() {
       });
     }
 
-    if (dbSellers) {
-      dbSellers.forEach((s) => {
-        const email = s.email.toLowerCase();
-        const invData = dbInventories?.find((i) => i.seller_email.toLowerCase() === email);
-        
-        sellersMap[email] = {
-          columns: invData?.columns || [],
-          rows: invData?.rows || [],
-          uploadedAt: invData?.uploaded_at || null,
-          sales: salesBySeller[email] || {},
-        };
-      });
-    }
+    // Gather all unique seller emails from sellers, inventories, and sales tables
+    const allEmails = new Set<string>();
+    if (dbSellers) dbSellers.forEach((s) => allEmails.add(s.email.toLowerCase()));
+    if (dbInventories) dbInventories.forEach((i) => allEmails.add(i.seller_email.toLowerCase()));
+    if (dbSales) dbSales.forEach((sa) => allEmails.add(sa.seller_email.toLowerCase()));
+
+    allEmails.forEach((email) => {
+      const invData = dbInventories?.find((i) => i.seller_email.toLowerCase() === email);
+      
+      sellersMap[email] = {
+        columns: invData?.columns || [],
+        rows: invData?.rows || [],
+        uploadedAt: invData?.uploaded_at || null,
+        sales: salesBySeller[email] || {},
+      };
+    });
 
     const exportLogs = dbLogs ? dbLogs.map((log) => ({
       id: log.id,
