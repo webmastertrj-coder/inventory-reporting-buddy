@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
+import { supabase, isCloudEnabled } from "./supabase-client";
 
 export interface User {
   email: string;
@@ -64,6 +65,55 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  useEffect(() => {
+    const client = supabase;
+    if (!isCloudEnabled || !client) return;
+
+    const syncSellers = () => {
+      client
+        .from("sellers")
+        .select("*")
+        .then(({ data, error }) => {
+          if (error) {
+            console.error("Error loading sellers from cloud:", error);
+            return;
+          }
+          if (data) {
+            setUsers((prev) => {
+              const mappedUsers: Record<string, UserDatabaseEntry> = {};
+              data.forEach((row) => {
+                mappedUsers[row.email.toLowerCase()] = {
+                  email: row.email,
+                  name: row.name,
+                  role: row.role as any,
+                  password: row.password,
+                  commission: Number(row.commission),
+                  warehouseId: row.warehouse_id,
+                };
+              });
+              
+              const merged = { ...prev, ...mappedUsers };
+              localStorage.setItem(USERS_KEY, JSON.stringify(merged));
+              return merged;
+            });
+          }
+        });
+    };
+
+    syncSellers();
+    
+    // Poll sellers list from cloud every 12 seconds
+    const interval = setInterval(syncSellers, 12000);
+    
+    // Sync on window focus
+    window.addEventListener("focus", syncSellers);
+    
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", syncSellers);
+    };
+  }, []);
+
   const login = (email: string, password: string): boolean => {
     const normalizedEmail = email.trim().toLowerCase();
     const foundUser = users[normalizedEmail];
@@ -92,17 +142,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // User already exists
       return false;
     }
+    const formattedWarehouseId = warehouseId.trim().padStart(2, "0");
     const newUser: UserDatabaseEntry = {
       name,
       email: normalizedEmail,
       role: "vendedor",
       password: "vendedor123", // Default password for new sellers
       commission,
-      warehouseId: warehouseId.trim().padStart(2, "0"),
+      warehouseId: formattedWarehouseId,
     };
     const updatedUsers = { ...users, [normalizedEmail]: newUser };
     localStorage.setItem(USERS_KEY, JSON.stringify(updatedUsers));
     setUsers(updatedUsers);
+
+    const client = supabase;
+    if (isCloudEnabled && client) {
+      client
+        .from("sellers")
+        .insert({
+          email: normalizedEmail,
+          name,
+          password: "vendedor123",
+          role: "vendedor",
+          commission,
+          warehouse_id: formattedWarehouseId,
+        })
+        .then(({ error }) => {
+          if (error) console.error("Error adding seller to cloud:", error);
+        });
+    }
     return true;
   };
 
@@ -125,6 +193,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const updatedUsers = { ...users, [normalizedEmail]: updatedUser };
     localStorage.setItem(USERS_KEY, JSON.stringify(updatedUsers));
     setUsers(updatedUsers);
+
+    const client = supabase;
+    if (isCloudEnabled && client) {
+      client
+        .from("sellers")
+        .update({ commission })
+        .eq("email", normalizedEmail)
+        .then(({ error }) => {
+          if (error) console.error("Error updating seller commission in cloud:", error);
+        });
+    }
     return true;
   };
 
@@ -133,10 +212,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!users[normalizedEmail]) {
       return false;
     }
-    const updatedUser = { ...users[normalizedEmail], warehouseId: warehouseId.trim().padStart(2, "0") };
+    const formattedWarehouseId = warehouseId.trim().padStart(2, "0");
+    const updatedUser = { ...users[normalizedEmail], warehouseId: formattedWarehouseId };
     const updatedUsers = { ...users, [normalizedEmail]: updatedUser };
     localStorage.setItem(USERS_KEY, JSON.stringify(updatedUsers));
     setUsers(updatedUsers);
+
+    const client = supabase;
+    if (isCloudEnabled && client) {
+      client
+        .from("sellers")
+        .update({ warehouse_id: formattedWarehouseId })
+        .eq("email", normalizedEmail)
+        .then(({ error }) => {
+          if (error) console.error("Error updating seller warehouse in cloud:", error);
+        });
+    }
     return true;
   };
 

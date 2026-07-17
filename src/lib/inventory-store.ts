@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { supabase, isCloudEnabled } from "./supabase-client";
 
 export type InventoryRow = Record<string, string | number> & { __id: string };
 
@@ -134,6 +135,99 @@ function persist() {
   listeners.forEach((l) => l());
 }
 
+export async function syncFromCloud() {
+  if (!isCloudEnabled || !supabase) return;
+
+  try {
+    // 1. Fetch all sellers
+    const { data: dbSellers, error: sellersErr } = await supabase
+      .from("sellers")
+      .select("*");
+      
+    if (sellersErr) throw sellersErr;
+
+    // 2. Fetch all inventories
+    const { data: dbInventories, error: invsErr } = await supabase
+      .from("inventories")
+      .select("*");
+      
+    if (invsErr) throw invsErr;
+
+    // 3. Fetch all sales
+    const { data: dbSales, error: salesErr } = await supabase
+      .from("sales")
+      .select("*");
+      
+    if (salesErr) throw salesErr;
+
+    // 4. Fetch all export logs
+    const { data: dbLogs, error: logsErr } = await supabase
+      .from("export_logs")
+      .select("*");
+      
+    if (logsErr) throw logsErr;
+
+    // Reconstruct state
+    const sellersMap: Record<string, SellerInventory> = {};
+
+    const salesBySeller: Record<string, Record<string, number>> = {};
+    if (dbSales) {
+      dbSales.forEach((sale) => {
+        const email = sale.seller_email.toLowerCase();
+        if (!salesBySeller[email]) salesBySeller[email] = {};
+        salesBySeller[email][sale.product_id] = sale.qty;
+      });
+    }
+
+    if (dbSellers) {
+      dbSellers.forEach((s) => {
+        const email = s.email.toLowerCase();
+        const invData = dbInventories?.find((i) => i.seller_email.toLowerCase() === email);
+        
+        sellersMap[email] = {
+          columns: invData?.columns || [],
+          rows: invData?.rows || [],
+          uploadedAt: invData?.uploaded_at || null,
+          sales: salesBySeller[email] || {},
+        };
+      });
+    }
+
+    const exportLogs = dbLogs ? dbLogs.map((log) => ({
+      id: log.id,
+      sellerEmail: log.seller_email.toLowerCase(),
+      timestamp: log.timestamp,
+      totalUnits: Number(log.total_units),
+      totalAmount: Number(log.total_amount),
+      commissionPercent: Number(log.commission_percent),
+      warehouseId: log.warehouse_id,
+      items: log.items || [],
+    })) : [];
+
+    state = {
+      sellers: sellersMap,
+      exportLogs,
+    };
+    
+    persist();
+  } catch (err) {
+    console.error("Failed to sync state from cloud:", err);
+  }
+}
+
+// Initial fetch and polling configuration
+if (isCloudEnabled) {
+  syncFromCloud();
+  if (typeof window !== "undefined") {
+    // Poll every 10 seconds
+    setInterval(syncFromCloud, 10000);
+    // Sync on tab focus
+    window.addEventListener("focus", () => {
+      syncFromCloud();
+    });
+  }
+}
+
 export function setInventory(sellerEmail: string, columns: string[], rows: InventoryRow[]) {
   const email = sellerEmail.toLowerCase();
   const sellers = { ...state.sellers };
@@ -146,6 +240,20 @@ export function setInventory(sellerEmail: string, columns: string[], rows: Inven
   };
   state = { ...state, sellers };
   persist();
+
+  if (isCloudEnabled && supabase) {
+    supabase
+      .from("inventories")
+      .upsert({
+        seller_email: email,
+        columns,
+        rows,
+        uploaded_at: new Date().toISOString(),
+      })
+      .then(({ error }) => {
+        if (error) console.error("Error saving inventory to cloud:", error);
+      });
+  }
 }
 
 export function setSale(sellerEmail: string, id: string, units: number) {
@@ -166,6 +274,30 @@ export function setSale(sellerEmail: string, id: string, units: number) {
   };
   state = { ...state, sellers };
   persist();
+
+  if (isCloudEnabled && supabase) {
+    if (!units || units <= 0) {
+      supabase
+        .from("sales")
+        .delete()
+        .eq("seller_email", email)
+        .eq("product_id", id)
+        .then(({ error }) => {
+          if (error) console.error("Error deleting sale from cloud:", error);
+        });
+    } else {
+      supabase
+        .from("sales")
+        .upsert({
+          seller_email: email,
+          product_id: id,
+          qty: units,
+        })
+        .then(({ error }) => {
+          if (error) console.error("Error saving sale to cloud:", error);
+        });
+    }
+  }
 }
 
 export function resetSales(sellerEmail: string) {
@@ -178,6 +310,16 @@ export function resetSales(sellerEmail: string) {
     };
     state = { ...state, sellers };
     persist();
+
+    if (isCloudEnabled && supabase) {
+      supabase
+        .from("sales")
+        .delete()
+        .eq("seller_email", email)
+        .then(({ error }) => {
+          if (error) console.error("Error resetting sales in cloud:", error);
+        });
+    }
   }
 }
 
@@ -187,6 +329,16 @@ export function clearSellerInventory(sellerEmail: string) {
   delete sellers[email];
   state = { ...state, sellers };
   persist();
+
+  if (isCloudEnabled && supabase) {
+    supabase
+      .from("inventories")
+      .delete()
+      .eq("seller_email", email)
+      .then(({ error }) => {
+        if (error) console.error("Error deleting inventory from cloud:", error);
+      });
+  }
 }
 
 export function clearAll() {
@@ -300,10 +452,13 @@ export function addExportLog(
   const totalUnits = items.reduce((sum, item) => sum + item.qty, 0);
   const totalAmount = items.reduce((sum, item) => sum + item.qty * item.price, 0);
 
+  const logId = `log_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+  const timestampStr = new Date().toISOString();
+
   const newLog: ExportLog = {
-    id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
+    id: logId,
     sellerEmail: email,
-    timestamp: new Date().toISOString(),
+    timestamp: timestampStr,
     totalUnits,
     totalAmount,
     commissionPercent,
@@ -316,6 +471,24 @@ export function addExportLog(
     exportLogs: [newLog, ...logs],
   };
   persist();
+
+  if (isCloudEnabled && supabase) {
+    supabase
+      .from("export_logs")
+      .insert({
+        id: logId,
+        seller_email: email,
+        timestamp: timestampStr,
+        total_units: totalUnits,
+        total_amount: totalAmount,
+        commission_percent: commissionPercent,
+        warehouse_id: warehouseId,
+        items,
+      })
+      .then(({ error }) => {
+        if (error) console.error("Error saving export log to cloud:", error);
+      });
+  }
 }
 
 export function deleteExportLog(logId: string) {
@@ -325,4 +498,14 @@ export function deleteExportLog(logId: string) {
     exportLogs: logs.filter((log) => log.id !== logId),
   };
   persist();
+
+  if (isCloudEnabled && supabase) {
+    supabase
+      .from("export_logs")
+      .delete()
+      .eq("id", logId)
+      .then(({ error }) => {
+        if (error) console.error("Error deleting export log from cloud:", error);
+      });
+  }
 }
