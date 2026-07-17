@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { supabase, isCloudEnabled } from "./supabase-client";
+import { toast } from "sonner";
 
 export type InventoryRow = Record<string, string | number> & { __id: string };
 
@@ -254,7 +255,10 @@ export function setInventory(sellerEmail: string, columns: string[], rows: Inven
         uploaded_at: new Date().toISOString(),
       })
       .then(({ error }) => {
-        if (error) console.error("Error saving inventory to cloud:", error);
+        if (error) {
+          console.error("Error saving inventory to cloud:", error);
+          toast.error("Error al guardar inventario en la nube: " + error.message);
+        }
       });
   }
 }
@@ -286,7 +290,10 @@ export function setSale(sellerEmail: string, id: string, units: number) {
         .eq("seller_email", email)
         .eq("product_id", id)
         .then(({ error }) => {
-          if (error) console.error("Error deleting sale from cloud:", error);
+          if (error) {
+            console.error("Error deleting sale from cloud:", error);
+            toast.error("Error al borrar venta en la nube: " + error.message);
+          }
         });
     } else {
       supabase
@@ -297,7 +304,10 @@ export function setSale(sellerEmail: string, id: string, units: number) {
           qty: units,
         })
         .then(({ error }) => {
-          if (error) console.error("Error saving sale to cloud:", error);
+          if (error) {
+            console.error("Error saving sale to cloud:", error);
+            toast.error("Error al guardar venta en la nube: " + error.message);
+          }
         });
     }
   }
@@ -320,7 +330,10 @@ export function resetSales(sellerEmail: string) {
         .delete()
         .eq("seller_email", email)
         .then(({ error }) => {
-          if (error) console.error("Error resetting sales in cloud:", error);
+          if (error) {
+            console.error("Error resetting sales in cloud:", error);
+            toast.error("Error al resetear ventas en la nube: " + error.message);
+          }
         });
     }
   }
@@ -339,7 +352,10 @@ export function clearSellerInventory(sellerEmail: string) {
       .delete()
       .eq("seller_email", email)
       .then(({ error }) => {
-        if (error) console.error("Error deleting inventory from cloud:", error);
+        if (error) {
+          console.error("Error deleting inventory from cloud:", error);
+          toast.error("Error al borrar inventario en la nube: " + error.message);
+        }
       });
   }
 }
@@ -489,7 +505,10 @@ export function addExportLog(
         items,
       })
       .then(({ error }) => {
-        if (error) console.error("Error saving export log to cloud:", error);
+        if (error) {
+          console.error("Error saving export log to cloud:", error);
+          toast.error("Error al guardar historial en la nube: " + error.message);
+        }
       });
   }
 }
@@ -508,7 +527,10 @@ export function deleteExportLog(logId: string) {
       .delete()
       .eq("id", logId)
       .then(({ error }) => {
-        if (error) console.error("Error deleting export log from cloud:", error);
+        if (error) {
+          console.error("Error deleting export log from cloud:", error);
+          toast.error("Error al borrar historial en la nube: " + error.message);
+        }
       });
   }
 }
