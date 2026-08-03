@@ -658,14 +658,15 @@ function ProveedorPage() {
                         return (
                           <div key={item.row.__id} className="py-3 flex items-center justify-between gap-3">
                             <div className="min-w-0 flex-1">
-                              <p className="font-bold text-xs text-foreground truncate">{item.name}</p>
-                              <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-                                {item.ref && <span className="font-mono text-3xs text-muted-foreground">REF: {item.ref}</span>}
+                              <p className="font-extrabold text-xs text-foreground truncate">{item.name}</p>
+                              <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                                {item.ref && (
+                                  <span className="font-mono text-3xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-md border border-primary/20">
+                                    REF: {item.ref}
+                                  </span>
+                                )}
                                 {item.variantDesc && (
-                                  <>
-                                    <span className="h-0.5 w-0.5 rounded-full bg-muted-foreground/40" />
-                                    <span className="text-3xs text-muted-foreground truncate">{item.variantDesc}</span>
-                                  </>
+                                  <span className="text-3xs text-muted-foreground font-medium truncate">{item.variantDesc}</span>
                                 )}
                               </div>
                               {keys.price && item.price > 0 && (

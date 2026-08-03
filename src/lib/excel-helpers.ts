@@ -70,6 +70,7 @@ export function generateCommissionsExcel(
   sellerName: string
 ) {
   const header = [
+    "Referencia",
     "StrProducto",
     "Descripción",
     "StrLote",
@@ -98,9 +99,10 @@ export function generateCommissionsExcel(
 
     const colorDesc = translateColor(item.color);
     data.push([
-      item.ref,
-      item.name,
-      item.size,
+      item.ref || "",
+      item.ref || "",
+      item.name || item.ref || "Producto",
+      item.size || "",
       colorDesc,
       item.qty,
       item.price,
@@ -116,7 +118,7 @@ export function generateCommissionsExcel(
 
   const ws = XLSX.utils.aoa_to_sheet(data);
   const range = XLSX.utils.decode_range(ws["!ref"]!);
-  const textCols = [0, 2, 3];
+  const textCols = [0, 1, 3, 4];
   for (let R = 1; R <= range.e.r; R++) {
     for (const C of textCols) {
       const addr = XLSX.utils.encode_cell({ r: R, c: C });

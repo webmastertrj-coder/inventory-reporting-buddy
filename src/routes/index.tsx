@@ -291,6 +291,7 @@ function Index() {
     }
     const commPercent = activeSellerObj?.commission ?? 0;
     const header = [
+      "Referencia",
       "StrProducto",
       "Descripción",
       "StrLote",
@@ -338,11 +339,15 @@ function Index() {
       totalTotalComision += rowTotalComision;
       totalTotalReembolsar += rowTotalReembolsar;
 
+      const refVal = keys.ref ? String(r[keys.ref] ?? "") : "";
+      const nameVal = keys.name ? String(r[keys.name] ?? "") : (refVal || "Producto");
+
       data.push([
-        String(r[keys.ref!] ?? ""),
-        keys.name ? String(r[keys.name] ?? "") : "Producto",
+        refVal,
+        refVal,
+        nameVal,
         keys.size ? String(r[keys.size] ?? "") : "",
-        keys.color ? String(r[keys.color] ?? "") : "",
+        keys.color ? translateColor(String(r[keys.color] ?? "")) : "",
         qty,
         price,
         ventaConIva,
@@ -366,6 +371,7 @@ function Index() {
       "",
       "",
       "",
+      "",
       totalQty,
       "",
       totalVentaConIva,
@@ -385,8 +391,8 @@ function Index() {
     const ws = XLSX.utils.aoa_to_sheet(data);
     const range = XLSX.utils.decode_range(ws["!ref"]!);
     
-    const textCols = [0, 1, 2, 3];
-    const currencyCols = [5, 6, 7, 8, 9, 10, 11, 12];
+    const textCols = [0, 1, 2, 3, 4];
+    const currencyCols = [6, 7, 8, 9, 10, 11, 12, 13];
 
     for (let R = 1; R <= range.e.r; R++) {
       for (let C = 0; C <= range.e.c; C++) {
