@@ -22,6 +22,7 @@ interface AuthContextType {
   addSeller: (name: string, email: string, commission: number, warehouseId: string) => boolean;
   updateSellerCommission: (email: string, commission: number) => boolean;
   updateSellerWarehouseId: (email: string, warehouseId: string) => boolean;
+  updateSellerEmail: (oldEmail: string, newEmail: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -254,8 +255,60 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return true;
   };
 
+  const updateSellerEmail = (oldEmail: string, newEmail: string): boolean => {
+    const oldNormalized = oldEmail.trim().toLowerCase();
+    const newNormalized = newEmail.trim().toLowerCase();
+
+    if (!newNormalized || !newNormalized.includes("@")) {
+      return false;
+    }
+
+    if (!users[oldNormalized]) {
+      return false;
+    }
+
+    if (oldNormalized !== newNormalized && users[newNormalized]) {
+      return false; // Email already taken
+    }
+
+    const existingUser = users[oldNormalized];
+    const updatedUser: UserDatabaseEntry = {
+      ...existingUser,
+      email: newNormalized,
+    };
+
+    const updatedUsers = { ...users };
+    delete updatedUsers[oldNormalized];
+    updatedUsers[newNormalized] = updatedUser;
+
+    localStorage.setItem(USERS_KEY, JSON.stringify(updatedUsers));
+    setUsers(updatedUsers);
+
+    if (user && user.email.trim().toLowerCase() === oldNormalized) {
+      const updatedSession: User = {
+        ...user,
+        email: newNormalized,
+      };
+      localStorage.setItem(SESSION_KEY, JSON.stringify(updatedSession));
+      setUser(updatedSession);
+    }
+
+    const client = supabase;
+    if (isCloudEnabled && client) {
+      client
+        .from("sellers")
+        .update({ email: newNormalized })
+        .eq("email", oldNormalized)
+        .then(({ error }) => {
+          if (error) console.error("Error updating seller email in cloud:", error);
+        });
+    }
+
+    return true;
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, sellers, addSeller, updateSellerCommission, updateSellerWarehouseId }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, sellers, addSeller, updateSellerCommission, updateSellerWarehouseId, updateSellerEmail }}>
       {children}
     </AuthContext.Provider>
   );

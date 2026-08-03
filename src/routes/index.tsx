@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { setInventory, useInventory, clearSellerInventory, resetSales, deductSalesFromInventory, detectKeyColumns, type InventoryRow, parsePrice, useExportLogs, deleteExportLog, setSale, addExportLog } from "@/lib/inventory-store";
+import { setInventory, useInventory, clearSellerInventory, resetSales, deductSalesFromInventory, migrateSellerEmailInStore, detectKeyColumns, type InventoryRow, parsePrice, useExportLogs, deleteExportLog, setSale, addExportLog } from "@/lib/inventory-store";
 import { useAuth } from "@/lib/auth-store";
 import { translateColor, getColorCode } from "@/lib/color-mapping";
 import { generateSalesExcel, generateCommissionsExcel } from "@/lib/excel-helpers";
@@ -27,7 +27,7 @@ export const Route = createFileRoute("/")({
 });
 
 function Index() {
-  const { user, loading: authLoading, logout, sellers, addSeller, updateSellerCommission, updateSellerWarehouseId } = useAuth();
+  const { user, loading: authLoading, logout, sellers, addSeller, updateSellerCommission, updateSellerWarehouseId, updateSellerEmail } = useAuth();
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileLoading, setFileLoading] = useState(false);
@@ -45,6 +45,10 @@ function Index() {
   // States for editing warehouse
   const [isEditingWarehouse, setIsEditingWarehouse] = useState(false);
   const [editWarehouseValue, setEditWarehouseValue] = useState("01");
+
+  // States for editing seller email
+  const [isEditingEmail, setIsEditingEmail] = useState(false);
+  const [editEmailValue, setEditEmailValue] = useState("");
 
   // State for filtering loaded products preview table
   const [tableFilter, setTableFilter] = useState("");
@@ -147,6 +151,28 @@ function Index() {
       setIsEditingWarehouse(false);
     } else {
       toast.error("No se pudo actualizar la bodega.");
+    }
+  };
+
+  const handleSaveEmail = () => {
+    const newEmail = editEmailValue.trim().toLowerCase();
+    if (!newEmail || !newEmail.includes("@")) {
+      toast.error("Por favor ingresa un correo electrónico válido.");
+      return;
+    }
+    if (newEmail === selectedSellerEmail.toLowerCase()) {
+      setIsEditingEmail(false);
+      return;
+    }
+    const oldEmail = selectedSellerEmail;
+    const success = updateSellerEmail(oldEmail, newEmail);
+    if (success) {
+      migrateSellerEmailInStore(oldEmail, newEmail);
+      setSelectedSellerEmail(newEmail);
+      toast.success("Correo de ingreso actualizado con éxito.");
+      setIsEditingEmail(false);
+    } else {
+      toast.error("No se pudo actualizar el correo. Es posible que ya esté registrado.");
     }
   };
 
@@ -785,7 +811,46 @@ function Index() {
                       <div className="h-2 w-2 rounded-full bg-primary" />
                       <h2 className="text-xl font-bold text-foreground">{activeSellerObj.name}</h2>
                     </div>
-                    <p className="text-sm text-muted-foreground mt-0.5">{activeSellerObj.email}</p>
+                    {isEditingEmail ? (
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <Input
+                          type="email"
+                          value={editEmailValue}
+                          onChange={(e) => setEditEmailValue(e.target.value)}
+                          className="h-7 w-60 text-xs py-0 px-2 border-border/80 bg-background"
+                          placeholder="nuevo_correo@gmail.com"
+                          required
+                        />
+                        <Button
+                          size="sm"
+                          className="h-7 px-2 py-0 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold gap-1 rounded-md"
+                          onClick={handleSaveEmail}
+                        >
+                          Guardar
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 py-0 text-xs font-medium text-muted-foreground hover:bg-accent rounded-md"
+                          onClick={() => setIsEditingEmail(false)}
+                        >
+                          Cancelar
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <p className="text-sm text-muted-foreground">{activeSellerObj.email}</p>
+                        <button
+                          onClick={() => {
+                            setEditEmailValue(activeSellerObj.email);
+                            setIsEditingEmail(true);
+                          }}
+                          className="text-xs text-primary hover:underline font-bold"
+                        >
+                          Editar
+                        </button>
+                      </div>
+                    )}
                     <div className="flex items-center gap-3 mt-2 flex-wrap text-xs text-muted-foreground">
                       {/* Comisión Edit block */}
                       <div className="flex items-center gap-1.5">

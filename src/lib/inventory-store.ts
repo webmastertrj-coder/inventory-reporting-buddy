@@ -470,6 +470,59 @@ export function clearSellerInventory(sellerEmail: string) {
   }
 }
 
+export function migrateSellerEmailInStore(oldEmail: string, newEmail: string) {
+  const oldKey = oldEmail.toLowerCase().trim();
+  const newKey = newEmail.toLowerCase().trim();
+
+  if (oldKey === newKey) return;
+
+  const sellers = { ...state.sellers };
+  if (sellers[oldKey]) {
+    sellers[newKey] = sellers[oldKey];
+    delete sellers[oldKey];
+  }
+
+  const exportLogs = (state.exportLogs || []).map((log) => {
+    if (log.sellerEmail.toLowerCase() === oldKey) {
+      return { ...log, sellerEmail: newKey };
+    }
+    return log;
+  });
+
+  state = {
+    ...state,
+    sellers,
+    exportLogs,
+  };
+  persist();
+
+  if (isCloudEnabled && supabase) {
+    supabase
+      .from("inventories")
+      .update({ seller_email: newKey })
+      .eq("seller_email", oldKey)
+      .then(({ error }) => {
+        if (error) console.error("Error updating inventories in cloud:", error);
+      });
+
+    supabase
+      .from("sales")
+      .update({ seller_email: newKey })
+      .eq("seller_email", oldKey)
+      .then(({ error }) => {
+        if (error) console.error("Error updating sales in cloud:", error);
+      });
+
+    supabase
+      .from("export_logs")
+      .update({ seller_email: newKey })
+      .eq("seller_email", oldKey)
+      .then(({ error }) => {
+        if (error) console.error("Error updating export logs in cloud:", error);
+      });
+  }
+}
+
 export function clearAll() {
   state = initial;
   persist();
