@@ -27,7 +27,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { detectKeyColumns, resetSales, setSale, useInventory, InventoryRow, parsePrice, addExportLog, deleteExportLog, useExportLogs } from "@/lib/inventory-store";
+import { detectKeyColumns, resetSales, deductSalesFromInventory, setSale, useInventory, InventoryRow, parsePrice, addExportLog, deleteExportLog, useExportLogs } from "@/lib/inventory-store";
 import { useAuth } from "@/lib/auth-store";
 import { translateColor, getColorCode } from "@/lib/color-mapping";
 import { generateSalesExcel, generateCommissionsExcel } from "@/lib/excel-helpers";
@@ -337,11 +337,11 @@ function ProveedorPage() {
     }));
     addExportLog(user?.email || "", warehouseId, commPercent, loggedItems);
 
-    // Reset current sales
+    // Deduct sales from inventory and reset current sales
     if (user) {
-      resetSales(user.email);
+      deductSalesFromInventory(user.email);
     }
-    toast.success("Ventas exportadas y archivadas en el historial.");
+    toast.success("Ventas exportadas, archivadas e inventario descontado con éxito.");
   };
 
   const handleExportCommissions = () => {
@@ -381,11 +381,11 @@ function ProveedorPage() {
     }));
     addExportLog(user?.email || "", warehouseId, commPercent, loggedItems);
 
-    // Reset current sales
+    // Deduct sales from inventory and reset current sales
     if (user) {
-      resetSales(user.email);
+      deductSalesFromInventory(user.email);
     }
-    toast.success("Liquidación exportada y archivada en el historial.");
+    toast.success("Liquidación exportada, archivada e inventario descontado con éxito.");
   };
 
   const handleIncrement = (id: string, currentVal: number, stock: number | null) => {

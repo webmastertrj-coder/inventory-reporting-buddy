@@ -378,6 +378,77 @@ export function resetSales(sellerEmail: string) {
   }
 }
 
+export function deductSalesFromInventory(sellerEmail: string) {
+  const email = sellerEmail.toLowerCase();
+  const sellers = { ...state.sellers };
+  const inv = sellers[email];
+
+  if (!inv) return;
+
+  const sales = inv.sales || {};
+  const hasSales = Object.keys(sales).some((id) => (sales[id] || 0) > 0);
+
+  if (!hasSales) return;
+
+  const keys = detectKeyColumns(inv.columns);
+  const stockCol = keys.stock;
+
+  const updatedRows = inv.rows.map((row) => {
+    const qtySold = sales[row.__id];
+    if (!qtySold || qtySold <= 0) return row;
+
+    if (!stockCol) return row;
+
+    const currentStock = Number(row[stockCol]) || 0;
+    const newStock = Math.max(0, currentStock - qtySold);
+
+    return {
+      ...row,
+      [stockCol]: newStock,
+    };
+  });
+
+  const now = new Date().toISOString();
+
+  sellers[email] = {
+    ...inv,
+    rows: updatedRows,
+    uploadedAt: now,
+    sales: {},
+  };
+
+  state = { ...state, sellers };
+  persist();
+
+  if (isCloudEnabled && supabase) {
+    supabase
+      .from("inventories")
+      .upsert({
+        seller_email: email,
+        columns: inv.columns,
+        rows: updatedRows,
+        uploaded_at: now,
+      })
+      .then(({ error: invErr }) => {
+        if (invErr) {
+          console.error("Error updating inventory in cloud after report:", invErr);
+          toast.error("Error al actualizar inventario en la nube: " + invErr.message);
+        }
+      });
+
+    supabase
+      .from("sales")
+      .delete()
+      .eq("seller_email", email)
+      .then(({ error: salesErr }) => {
+        if (salesErr) {
+          console.error("Error resetting sales in cloud after report:", salesErr);
+          toast.error("Error al resetear ventas en la nube: " + salesErr.message);
+        }
+      });
+  }
+}
+
 export function clearSellerInventory(sellerEmail: string) {
   const email = sellerEmail.toLowerCase();
   const sellers = { ...state.sellers };

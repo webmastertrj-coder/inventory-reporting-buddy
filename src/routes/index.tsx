@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { setInventory, useInventory, clearSellerInventory, resetSales, detectKeyColumns, type InventoryRow, parsePrice, useExportLogs, deleteExportLog, setSale, addExportLog } from "@/lib/inventory-store";
+import { setInventory, useInventory, clearSellerInventory, resetSales, deductSalesFromInventory, detectKeyColumns, type InventoryRow, parsePrice, useExportLogs, deleteExportLog, setSale, addExportLog } from "@/lib/inventory-store";
 import { useAuth } from "@/lib/auth-store";
 import { translateColor, getColorCode } from "@/lib/color-mapping";
 import { generateSalesExcel, generateCommissionsExcel } from "@/lib/excel-helpers";
@@ -311,9 +311,10 @@ function Index() {
         activeSellerObj?.commission ?? 10,
         loggedItems
       );
+      deductSalesFromInventory(selectedSellerEmail);
     }
 
-    toast.success(`Archivo exportado con ${data.length - 1} líneas para el vendedor.`);
+    toast.success(`Archivo exportado con ${data.length - 1} líneas e inventario del vendedor actualizado.`);
   };
 
   const handleExportSellerCommissions = () => {
@@ -486,9 +487,10 @@ function Index() {
         activeSellerObj?.commission ?? 10,
         loggedItems
       );
+      deductSalesFromInventory(selectedSellerEmail);
     }
 
-    toast.success("¡Reporte de comisiones exportado con éxito!");
+    toast.success("¡Reporte de comisiones exportado e inventario del vendedor actualizado!");
   };
 
   const handleDownloadTemplate = () => {
