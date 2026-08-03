@@ -2,12 +2,12 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useRef, useState, useEffect, useMemo } from "react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
-import { LogOut, Loader2, Plus, User, FileSpreadsheet, Trash2, Download, RefreshCw, FileText, CheckCircle2, AlertCircle, Search } from "lucide-react";
+import { LogOut, Loader2, Plus, User, FileSpreadsheet, Trash2, Download, RefreshCw, FileText, CheckCircle2, AlertCircle, Search, ShoppingBag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { setInventory, useInventory, clearSellerInventory, resetSales, detectKeyColumns, type InventoryRow, parsePrice, useExportLogs, deleteExportLog } from "@/lib/inventory-store";
+import { setInventory, useInventory, clearSellerInventory, resetSales, detectKeyColumns, type InventoryRow, parsePrice, useExportLogs, deleteExportLog, setSale, addExportLog } from "@/lib/inventory-store";
 import { useAuth } from "@/lib/auth-store";
 import { translateColor, getColorCode } from "@/lib/color-mapping";
 import { generateSalesExcel, generateCommissionsExcel } from "@/lib/excel-helpers";
@@ -281,6 +281,38 @@ function Index() {
     const stamp = new Date().toISOString().slice(0, 10);
     const sellerSlug = selectedSellerEmail.split("@")[0];
     XLSX.writeFile(wb, `REPORTE_${sellerSlug.toUpperCase()}_${stamp}.xls`, { bookType: "biff8" });
+
+    // Save log entry to history
+    const loggedItems = [];
+    for (const r of selectedInv.rows) {
+      const qty = selectedInv.sales[r.__id];
+      if (!qty || qty <= 0) continue;
+      const refVal = keys.ref ? String(r[keys.ref] ?? "") : "";
+      const nameVal = keys.name ? String(r[keys.name] ?? "") : (refVal || "Producto");
+      const sizeVal = keys.size ? String(r[keys.size] ?? "") : "";
+      const colorVal = keys.color ? String(r[keys.color] ?? "") : "";
+      loggedItems.push({
+        __id: r.__id,
+        ref: refVal,
+        name: nameVal,
+        variantDesc: `${translateColor(colorVal)} / Talla ${sizeVal}`,
+        qty,
+        price: keys.price ? parsePrice(r[keys.price]) : 0,
+        stock: keys.stock ? Number(r[keys.stock]) || null : null,
+        size: sizeVal,
+        color: colorVal,
+      });
+    }
+
+    if (loggedItems.length > 0) {
+      addExportLog(
+        selectedSellerEmail,
+        activeSellerObj?.warehouseId ?? "01",
+        activeSellerObj?.commission ?? 10,
+        loggedItems
+      );
+    }
+
     toast.success(`Archivo exportado con ${data.length - 1} líneas para el vendedor.`);
   };
 
@@ -424,6 +456,38 @@ function Index() {
     const stamp = new Date().toISOString().slice(0, 10);
     const sellerSlug = selectedSellerEmail.split("@")[0];
     XLSX.writeFile(wb, `REPORTE_COMISIONES_${sellerSlug.toUpperCase()}_${stamp}.xls`, { bookType: "biff8" });
+
+    // Save log entry to history
+    const loggedItems = [];
+    for (const r of selectedInv.rows) {
+      const qty = selectedInv.sales[r.__id];
+      if (!qty || qty <= 0) continue;
+      const refVal = keys.ref ? String(r[keys.ref] ?? "") : "";
+      const nameVal = keys.name ? String(r[keys.name] ?? "") : (refVal || "Producto");
+      const sizeVal = keys.size ? String(r[keys.size] ?? "") : "";
+      const colorVal = keys.color ? String(r[keys.color] ?? "") : "";
+      loggedItems.push({
+        __id: r.__id,
+        ref: refVal,
+        name: nameVal,
+        variantDesc: `${translateColor(colorVal)} / Talla ${sizeVal}`,
+        qty,
+        price: keys.price ? parsePrice(r[keys.price]) : 0,
+        stock: keys.stock ? Number(r[keys.stock]) || null : null,
+        size: sizeVal,
+        color: colorVal,
+      });
+    }
+
+    if (loggedItems.length > 0) {
+      addExportLog(
+        selectedSellerEmail,
+        activeSellerObj?.warehouseId ?? "01",
+        activeSellerObj?.commission ?? 10,
+        loggedItems
+      );
+    }
+
     toast.success("¡Reporte de comisiones exportado con éxito!");
   };
 
@@ -980,8 +1044,8 @@ function Index() {
                                   {c}
                                 </th>
                               ))}
-                              <th className="whitespace-nowrap px-3 py-2.5 text-right font-semibold">
-                                Ventas Reportadas
+                              <th className="whitespace-nowrap px-3 py-2.5 text-right font-semibold min-w-[140px]">
+                                Ventas (Montar / Editar)
                               </th>
                             </tr>
                           </thead>
@@ -995,14 +1059,45 @@ function Index() {
                                       {c === keys.color ? translateColor(r[c]) : String(r[c] ?? "")}
                                     </td>
                                   ))}
-                                  <td className="whitespace-nowrap px-3 py-2.5 text-right font-medium text-primary">
-                                    {unitsSold > 0 ? (
-                                      <span className="bg-primary/10 text-primary px-2.5 py-0.5 rounded-full text-2xs font-semibold">
-                                        {unitsSold} u.
-                                      </span>
-                                    ) : (
-                                      <span className="text-muted-foreground/45">-</span>
-                                    )}
+                                  <td className="whitespace-nowrap px-3 py-2.5 text-right">
+                                    <div className="flex items-center justify-end gap-1">
+                                      <Button
+                                        type="button"
+                                        size="icon"
+                                        variant="outline"
+                                        onClick={() => setSale(selectedSellerEmail, r.__id, Math.max(0, unitsSold - 1))}
+                                        disabled={unitsSold === 0}
+                                        className="h-6 w-6 rounded text-xs font-bold shrink-0 disabled:opacity-30"
+                                        title="Restar 1 unidad"
+                                      >
+                                        -
+                                      </Button>
+                                      <Input
+                                        type="number"
+                                        min={0}
+                                        value={unitsSold || ""}
+                                        placeholder="0"
+                                        onChange={(e) => {
+                                          const val = parseInt(e.target.value, 10);
+                                          setSale(selectedSellerEmail, r.__id, isNaN(val) ? 0 : Math.max(0, val));
+                                        }}
+                                        className={`h-6 w-12 text-center font-mono font-bold text-xs rounded transition-colors px-1 ${
+                                          unitsSold > 0
+                                            ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-emerald-500/50"
+                                            : "bg-background text-foreground border-border"
+                                        }`}
+                                      />
+                                      <Button
+                                        type="button"
+                                        size="icon"
+                                        variant="outline"
+                                        onClick={() => setSale(selectedSellerEmail, r.__id, unitsSold + 1)}
+                                        className="h-6 w-6 rounded text-xs font-bold shrink-0 bg-primary/10 border-primary/30 text-primary hover:bg-primary/20"
+                                        title="Sumar 1 unidad"
+                                      >
+                                        +
+                                      </Button>
+                                    </div>
                                   </td>
                                 </tr>
                               );
