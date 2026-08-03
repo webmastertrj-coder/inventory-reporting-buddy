@@ -23,6 +23,7 @@ interface AuthContextType {
   updateSellerCommission: (email: string, commission: number) => boolean;
   updateSellerWarehouseId: (email: string, warehouseId: string) => boolean;
   updateSellerEmail: (oldEmail: string, newEmail: string) => boolean;
+  deleteSeller: (email: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -307,8 +308,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return true;
   };
 
+  const deleteSeller = (email: string): boolean => {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!users[normalizedEmail]) {
+      return false;
+    }
+
+    const updatedUsers = { ...users };
+    delete updatedUsers[normalizedEmail];
+
+    localStorage.setItem(USERS_KEY, JSON.stringify(updatedUsers));
+    setUsers(updatedUsers);
+
+    if (user && user.email.trim().toLowerCase() === normalizedEmail) {
+      logout();
+    }
+
+    const client = supabase;
+    if (isCloudEnabled && client) {
+      client
+        .from("sellers")
+        .delete()
+        .eq("email", normalizedEmail)
+        .then(({ error }) => {
+          if (error) console.error("Error deleting seller from cloud:", error);
+        });
+    }
+
+    return true;
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, sellers, addSeller, updateSellerCommission, updateSellerWarehouseId, updateSellerEmail }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, sellers, addSeller, updateSellerCommission, updateSellerWarehouseId, updateSellerEmail, deleteSeller }}>
       {children}
     </AuthContext.Provider>
   );

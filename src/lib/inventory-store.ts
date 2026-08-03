@@ -467,6 +467,16 @@ export function clearSellerInventory(sellerEmail: string) {
           toast.error("Error al borrar inventario en la nube: " + error.message);
         }
       });
+
+    supabase
+      .from("sales")
+      .delete()
+      .eq("seller_email", email)
+      .then(({ error }) => {
+        if (error) {
+          console.error("Error deleting sales from cloud:", error);
+        }
+      });
   }
 }
 

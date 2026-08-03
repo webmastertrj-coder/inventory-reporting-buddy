@@ -2,11 +2,22 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useRef, useState, useEffect, useMemo } from "react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
-import { LogOut, Loader2, Plus, User, FileSpreadsheet, Trash2, Download, RefreshCw, FileText, CheckCircle2, AlertCircle, Search, ShoppingBag } from "lucide-react";
+import { LogOut, Loader2, Plus, User, UserX, FileSpreadsheet, Trash2, Download, RefreshCw, FileText, CheckCircle2, AlertCircle, Search, ShoppingBag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { setInventory, useInventory, clearSellerInventory, resetSales, deductSalesFromInventory, migrateSellerEmailInStore, detectKeyColumns, type InventoryRow, parsePrice, useExportLogs, deleteExportLog, setSale, addExportLog } from "@/lib/inventory-store";
 import { useAuth } from "@/lib/auth-store";
 import { translateColor, getColorCode } from "@/lib/color-mapping";
@@ -27,7 +38,7 @@ export const Route = createFileRoute("/")({
 });
 
 function Index() {
-  const { user, loading: authLoading, logout, sellers, addSeller, updateSellerCommission, updateSellerWarehouseId, updateSellerEmail } = useAuth();
+  const { user, loading: authLoading, logout, sellers, addSeller, updateSellerCommission, updateSellerWarehouseId, updateSellerEmail, deleteSeller } = useAuth();
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileLoading, setFileLoading] = useState(false);
@@ -173,6 +184,30 @@ function Index() {
       setIsEditingEmail(false);
     } else {
       toast.error("No se pudo actualizar el correo. Es posible que ya esté registrado.");
+    }
+  };
+
+  const handleDeleteSeller = (email: string) => {
+    const sellerObj = sellers.find((s) => s.email.toLowerCase() === email.toLowerCase());
+    const name = sellerObj?.name || email;
+
+    // 1. Clear inventory & sales for seller
+    clearSellerInventory(email);
+
+    // 2. Delete seller user account
+    const success = deleteSeller(email);
+
+    if (success) {
+      // 3. Re-assign selectedSellerEmail to the next available seller
+      const remainingSellers = sellers.filter((s) => s.email.toLowerCase() !== email.toLowerCase());
+      if (remainingSellers.length > 0) {
+        setSelectedSellerEmail(remainingSellers[0].email);
+      } else {
+        setSelectedSellerEmail("");
+      }
+      toast.success(`El vendedor "${name}" y todo su inventario fueron eliminados.`);
+    } else {
+      toast.error("No se pudo eliminar el vendedor.");
     }
   };
 
@@ -952,17 +987,52 @@ function Index() {
                       </div>
                     </div>
                   </div>
-                  {selectedInv.uploadedAt ? (
-                    <div className="flex items-center gap-1.5 text-xs text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-400 border border-emerald-200/55 rounded-full px-3 py-1 font-medium w-fit">
-                      <CheckCircle2 className="h-3.5 w-3.5" />
-                      <span>Inventario cargado ({selectedInv.rows.length} refs)</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400 border border-amber-200/55 rounded-full px-3 py-1 font-medium w-fit">
-                      <AlertCircle className="h-3.5 w-3.5" />
-                      <span>Sin inventario asignado</span>
-                    </div>
-                  )}
+                  <div className="flex flex-col sm:items-end gap-2">
+                    {selectedInv.uploadedAt ? (
+                      <div className="flex items-center gap-1.5 text-xs text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-400 border border-emerald-200/55 rounded-full px-3 py-1 font-medium w-fit">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        <span>Inventario cargado ({selectedInv.rows.length} refs)</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400 border border-amber-200/55 rounded-full px-3 py-1 font-medium w-fit">
+                        <AlertCircle className="h-3.5 w-3.5" />
+                        <span>Sin inventario asignado</span>
+                      </div>
+                    )}
+
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:bg-destructive/10 hover:text-destructive gap-1.5 text-xs h-7 font-medium"
+                        >
+                          <UserX className="h-3.5 w-3.5" />
+                          Eliminar Vendedor
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+                            <UserX className="h-5 w-5" />
+                            ¿Eliminar vendedor "{activeSellerObj.name}"?
+                          </AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Esta acción eliminará permanentemente la cuenta de ingreso ({activeSellerObj.email}), su acceso a la plataforma y todo su inventario asignado tanto localmente como en la nube.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={() => handleDeleteSeller(activeSellerObj.email)}
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90 font-semibold"
+                          >
+                            Sí, eliminar vendedor
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
                 </div>
 
                 {/* Dashboard Stats */}
