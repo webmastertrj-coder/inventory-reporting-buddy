@@ -216,6 +216,11 @@ function Index() {
   const keys = useMemo(() => detectKeyColumns(selectedInv.columns), [selectedInv.columns]);
   const totalSoldUnits = useMemo(() => Object.values(selectedInv.sales).reduce((a, b) => a + b, 0), [selectedInv.sales]);
   const productsWithSales = useMemo(() => Object.keys(selectedInv.sales).length, [selectedInv.sales]);
+  const totalStockUnits = useMemo(() => {
+    const stockKey = keys.stock;
+    if (!stockKey) return 0;
+    return selectedInv.rows.reduce((sum, r) => sum + (Number(r[stockKey]) || 0), 0);
+  }, [selectedInv.rows, keys.stock]);
 
   const filteredAdminRows = useMemo(() => {
     const term = tableFilter.trim().toLowerCase();
@@ -824,8 +829,9 @@ function Index() {
                 </div>
 
                 {/* Dashboard Stats */}
-                <div className="grid gap-4 grid-cols-3">
+                <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
                   <StatCard label="Total Productos" value={selectedInv.rows.length} />
+                  <StatCard label="Unidades Inventario" value={totalStockUnits} />
                   <StatCard label="Refs Con Ventas" value={productsWithSales} />
                   <StatCard label="Unidades Vendidas" value={totalSoldUnits} />
                 </div>
@@ -1043,6 +1049,13 @@ function SellerListItem({
   const sellerInv = useInventory(seller.email);
   const hasInventory = sellerInv.rows.length > 0;
 
+  const sellerKeys = useMemo(() => detectKeyColumns(sellerInv.columns), [sellerInv.columns]);
+  const totalSellerUnits = useMemo(() => {
+    const stockKey = sellerKeys.stock;
+    if (!stockKey) return 0;
+    return sellerInv.rows.reduce((sum, r) => sum + (Number(r[stockKey]) || 0), 0);
+  }, [sellerInv.rows, sellerKeys.stock]);
+
   return (
     <button
       onClick={onSelect}
@@ -1060,11 +1073,16 @@ function SellerListItem({
           Bodega: {seller.warehouseId ?? "01"} • {seller.email}
         </p>
       </div>
-      <div className="shrink-0">
+      <div className="shrink-0 flex flex-col items-end gap-0.5">
         {hasInventory ? (
-          <span className="text-2xs bg-emerald-50 text-emerald-600 dark:bg-emerald-950/20 dark:text-emerald-400 font-semibold px-2 py-0.5 rounded-full border border-emerald-100 dark:border-emerald-900/30">
-            {sellerInv.rows.length} refs
-          </span>
+          <>
+            <span className="text-2xs bg-emerald-50 text-emerald-600 dark:bg-emerald-950/20 dark:text-emerald-400 font-semibold px-2 py-0.5 rounded-full border border-emerald-100 dark:border-emerald-900/30">
+              {sellerInv.rows.length} refs
+            </span>
+            <span className="text-3xs text-muted-foreground font-mono font-medium">
+              {totalSellerUnits.toLocaleString()} uds
+            </span>
+          </>
         ) : (
           <span className="text-2xs bg-muted text-muted-foreground font-medium px-2 py-0.5 rounded-full border border-border">
             Vacío

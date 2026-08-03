@@ -197,6 +197,12 @@ function ProveedorPage() {
     });
   }, [groupedProducts, filter, showOnlySales, inv.sales, inv.columns]);
 
+  const totalStockUnits = useMemo(() => {
+    const stockKey = keys.stock;
+    if (!stockKey) return 0;
+    return inv.rows.reduce((sum, r) => sum + (Number(r[stockKey]) || 0), 0);
+  }, [inv.rows, keys.stock]);
+
   // Calculate totals
   const totalSoldUnits = Object.values(inv.sales).reduce((a, b) => a + b, 0);
   const productsWithSalesCount = Object.keys(inv.sales).length;
@@ -500,8 +506,17 @@ function ProveedorPage() {
                 )}
               </div>
 
-              <div className="flex items-center justify-between pt-1">
-                <span className="text-2xs text-muted-foreground font-semibold uppercase tracking-wider">Filtrar prendas:</span>
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <div className="flex flex-wrap items-center gap-2 text-2xs font-semibold">
+                  <span className="bg-neutral-100 dark:bg-neutral-800 text-muted-foreground px-2.5 py-1 rounded-lg border border-border">
+                    📦 {inv.rows.length} refs
+                  </span>
+                  {totalStockUnits > 0 && (
+                    <span className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400 px-2.5 py-1 rounded-lg border border-emerald-200/50 font-bold">
+                      {totalStockUnits.toLocaleString()} unidades en inventario
+                    </span>
+                  )}
+                </div>
                 <button
                   onClick={() => setShowOnlySales(!showOnlySales)}
                   className={`text-xs font-bold px-3 py-1.5 rounded-full border transition-all ${
