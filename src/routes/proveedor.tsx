@@ -127,22 +127,25 @@ function ProveedorPage() {
     return s?.warehouseId ?? "01";
   }, [sellers, user]);
 
-  // Group products by Name or Reference
+  // Group products by Reference first, then SKU, then Name
   const groupedProducts = useMemo(() => {
     const groups: Record<string, GroupedProduct> = {};
 
     inv.rows.forEach((row) => {
-      const nameVal = keys.name ? String(row[keys.name] ?? "") : "";
-      const refVal = keys.ref ? String(row[keys.ref] ?? "") : "";
-      const groupKey = (nameVal || refVal || row.__id).trim().toLowerCase();
+      const nameVal = keys.name ? String(row[keys.name] ?? "").trim() : "";
+      const refVal = keys.ref ? String(row[keys.ref] ?? "").trim() : "";
+      const skuVal = keys.sku ? String(row[keys.sku] ?? "").trim() : "";
+      
+      // Prioritize Reference code as the primary grouping key
+      const groupKey = (refVal || skuVal || nameVal || row.__id).trim().toLowerCase();
       const stockVal = keys.stock ? Number(row[keys.stock]) || 0 : 0;
 
       if (!groups[groupKey]) {
         groups[groupKey] = {
           key: groupKey,
-          name: nameVal || refVal || "Producto sin nombre",
-          ref: refVal,
-          sku: keys.sku ? String(row[keys.sku] ?? "") : "",
+          name: nameVal || (refVal ? `Ref: ${refVal}` : "Producto sin nombre"),
+          ref: refVal || skuVal || nameVal,
+          sku: skuVal,
           totalStock: 0,
           variants: [],
         };
@@ -158,31 +161,40 @@ function ProveedorPage() {
   // Filter grouped products
   const filteredProducts = useMemo(() => {
     const term = filter.trim().toLowerCase();
+    const cleanTerm = term.replace(/[\s\-_]/g, "");
 
-    return groupedProducts
-      .map((gp) => {
-        const matchedVariants = gp.variants.filter((v) => {
-          if (!term) return true;
-          return inv.columns.some((col) =>
-            String(v[col] ?? "").toLowerCase().includes(term)
-          );
-        });
+    return groupedProducts.filter((gp) => {
+      if (showOnlySales) {
+        const hasSales = gp.variants.some((v) => (inv.sales[v.__id] ?? 0) > 0);
+        if (!hasSales) return false;
+      }
 
-        return {
-          ...gp,
-          variants: matchedVariants,
-        };
-      })
-      .filter((gp) => {
-        if (gp.variants.length === 0) return false;
+      if (!term) return true;
 
-        if (showOnlySales) {
-          const hasSales = gp.variants.some((v) => (inv.sales[v.__id] ?? 0) > 0);
-          if (!hasSales) return false;
-        }
+      // Check product header (ref, name, sku) with both raw term and cleanTerm
+      const gpRefLower = gp.ref.toLowerCase();
+      const gpNameLower = gp.name.toLowerCase();
+      const gpSkuLower = gp.sku.toLowerCase();
 
-        return true;
-      });
+      const matchesHeader = 
+        gpRefLower.includes(term) ||
+        gpNameLower.includes(term) ||
+        gpSkuLower.includes(term) ||
+        (cleanTerm.length > 2 && (
+          gpRefLower.replace(/[\s\-_]/g, "").includes(cleanTerm) ||
+          gpNameLower.replace(/[\s\-_]/g, "").includes(cleanTerm)
+        ));
+
+      if (matchesHeader) return true;
+
+      // Check if any variant cell matches search term
+      return gp.variants.some((v) =>
+        inv.columns.some((col) => {
+          const val = String(v[col] ?? "").toLowerCase();
+          return val.includes(term) || (cleanTerm.length > 2 && val.replace(/[\s\-_]/g, "").includes(cleanTerm));
+        })
+      );
+    });
   }, [groupedProducts, filter, showOnlySales, inv.sales, inv.columns]);
 
   // Calculate totals
@@ -1050,11 +1062,16 @@ function ProductVirtualCard({
       {/* CARD CONTENT */}
       <div className="p-4 flex-1 flex flex-col justify-between space-y-4">
         
-        {/* Product Title */}
+        {/* Product Title & Ref */}
         <div className="space-y-0.5">
           <h4 className="font-extrabold text-sm text-foreground tracking-tight line-clamp-2" title={product.name}>
             {product.name}
           </h4>
+          {product.ref && product.ref !== product.name && (
+            <p className="text-3xs font-mono font-semibold text-muted-foreground">
+              Ref: <span className="text-foreground font-bold">{product.ref}</span>
+            </p>
+          )}
         </div>
 
         {/* SELECTORS WRAPPER */}

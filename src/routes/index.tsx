@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useRef, useState, useEffect, useMemo } from "react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
-import { LogOut, Loader2, Plus, User, FileSpreadsheet, Trash2, Download, RefreshCw, FileText, CheckCircle2, AlertCircle } from "lucide-react";
+import { LogOut, Loader2, Plus, User, FileSpreadsheet, Trash2, Download, RefreshCw, FileText, CheckCircle2, AlertCircle, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -45,6 +45,9 @@ function Index() {
   // States for editing warehouse
   const [isEditingWarehouse, setIsEditingWarehouse] = useState(false);
   const [editWarehouseValue, setEditWarehouseValue] = useState("01");
+
+  // State for filtering loaded products preview table
+  const [tableFilter, setTableFilter] = useState("");
 
   // Hook to get the inventory of the selected seller
   const selectedInv = useInventory(selectedSellerEmail);
@@ -157,11 +160,21 @@ function Index() {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
       const sheet = wb.Sheets[wb.SheetNames[0]];
-      const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
-      if (!json.length) {
+      const rawJson = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+      if (!rawJson.length) {
         toast.error("La hoja está vacía");
         return;
       }
+      
+      // Clean keys in every row object (trim whitespace from header names)
+      const json: Record<string, string | number>[] = rawJson.map((row) => {
+        const cleanRow: Record<string, string | number> = {};
+        Object.keys(row).forEach((k) => {
+          cleanRow[k.trim()] = row[k] as string | number;
+        });
+        return cleanRow;
+      });
+
       const columns = Object.keys(json[0]);
       const tempKeys = detectKeyColumns(columns);
       const mergedRowsMap: Record<string, InventoryRow> = {};
@@ -203,6 +216,16 @@ function Index() {
   const keys = useMemo(() => detectKeyColumns(selectedInv.columns), [selectedInv.columns]);
   const totalSoldUnits = useMemo(() => Object.values(selectedInv.sales).reduce((a, b) => a + b, 0), [selectedInv.sales]);
   const productsWithSales = useMemo(() => Object.keys(selectedInv.sales).length, [selectedInv.sales]);
+
+  const filteredAdminRows = useMemo(() => {
+    const term = tableFilter.trim().toLowerCase();
+    if (!term) return selectedInv.rows;
+    return selectedInv.rows.filter((r) =>
+      selectedInv.columns.some((c) =>
+        String(r[c] ?? "").toLowerCase().includes(term)
+      )
+    );
+  }, [selectedInv.rows, selectedInv.columns, tableFilter]);
 
   const handleExportSellerSales = () => {
     if (!keys.ref) {
@@ -925,6 +948,17 @@ function Index() {
                       </div>
                     </CardHeader>
                     <CardContent>
+                      {/* Search box for preview table */}
+                      <div className="relative mb-3.5 max-w-sm">
+                        <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                        <Input
+                          placeholder="Buscar por referencia, color, talla, nombre..."
+                          value={tableFilter}
+                          onChange={(e) => setTableFilter(e.target.value)}
+                          className="pl-8 h-8 text-xs rounded-lg"
+                        />
+                      </div>
+
                       <div className="overflow-auto rounded-md border border-border bg-card">
                         <table className="w-full text-xs">
                           <thead className="bg-muted/80 text-muted-foreground border-b border-border">
@@ -940,7 +974,7 @@ function Index() {
                             </tr>
                           </thead>
                           <tbody>
-                            {selectedInv.rows.slice(0, 25).map((r) => {
+                            {filteredAdminRows.slice(0, 50).map((r) => {
                               const unitsSold = selectedInv.sales[r.__id] || 0;
                               return (
                                 <tr key={r.__id} className="border-b border-border/50 last:border-0 hover:bg-muted/30 transition-colors">
@@ -964,11 +998,16 @@ function Index() {
                           </tbody>
                         </table>
                       </div>
-                      {selectedInv.rows.length > 25 && (
-                        <p className="mt-2.5 text-2xs text-muted-foreground text-right italic">
-                          Mostrando 25 de {selectedInv.rows.length} productos totales.
-                        </p>
-                      )}
+                      <div className="mt-2.5 flex items-center justify-between text-2xs text-muted-foreground">
+                        <span>
+                          {filteredAdminRows.length === 0 ? "No se encontraron coincidencias." : `Mostrando ${Math.min(50, filteredAdminRows.length)} de ${filteredAdminRows.length} resultados.`}
+                        </span>
+                        {selectedInv.rows.length > 50 && (
+                          <span className="italic">
+                            (Total inventario: {selectedInv.rows.length} referencias)
+                          </span>
+                        )}
+                      </div>
                     </CardContent>
                   </Card>
                 )}

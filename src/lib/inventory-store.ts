@@ -438,38 +438,39 @@ export function useExportLogs(): ExportLog[] {
   return globalState.exportLogs || [];
 }
 
-/** Try to find a sensible "name" and "sku" column heuristically */
+/** Try to find sensible key columns heuristically */
 export function detectKeyColumns(columns: string[]) {
-  const trimmedCols = columns.map((c) => c.trim());
-  const lower = trimmedCols.map((c) => c.toLowerCase());
-  
   const find = (needles: string[], exclude: string | null = null) => {
-    const idx = lower.findIndex((c, i) => 
-      trimmedCols[i] !== exclude && needles.some((n) => c.includes(n))
-    );
-    return idx >= 0 ? trimmedCols[idx] : null;
+    const idx = columns.findIndex((c) => {
+      const clean = c.trim().toLowerCase();
+      const cleanExclude = exclude ? exclude.trim().toLowerCase() : null;
+      return clean !== cleanExclude && needles.some((n) => clean.includes(n));
+    });
+    return idx >= 0 ? columns[idx] : null;
   };
 
-  // Find refCol by searching first for strproducto, referencia, modelo
-  let refCol = find(["strproducto", "referencia", "modelo"]);
+  // Find refCol by searching first for explicit reference keys
+  let refCol = find(["strproducto", "referencia", "modelo", "referencia_producto", "ref."]);
   if (!refCol) {
-    // Robust fallbacks for other standard reference column names
-    refCol = find(["ref", "sku", "codigo", "código", "code", "producto"]);
+    refCol = find(["ref", "sku", "codigo", "código", "code", "producto", "articulo", "artículo", "estilo", "item"]);
   }
 
-  // Prioritize "pvp" for price, otherwise search standard price keys
-  const pvpIdx = lower.findIndex((c) => c === "pvp" || c.includes("pvp"));
+  // Prioritize PVP or intvalorunitario for price
+  const pvpIdx = columns.findIndex((c) => {
+    const clean = c.trim().toLowerCase();
+    return clean === "pvp" || clean.includes("pvp") || clean === "intvalorunitario";
+  });
   const priceCol = pvpIdx >= 0
-    ? trimmedCols[pvpIdx]
-    : find(["precio", "valor", "price", "costo", "cost", "unitario"]);
+    ? columns[pvpIdx]
+    : find(["precio", "valor", "price", "costo", "cost", "unitario", "vlr", "val"]);
 
   return {
-    sku: find(["sku", "codigo", "código", "code", "ref"], refCol),
-    name: find(["nombre", "producto", "name", "descrip"], refCol),
-    stock: find(["stock", "existencia", "cantidad", "inventario"]),
+    sku: find(["sku", "barcode", "codigobarras", "ean", "upc", "codigo", "código", "code"], refCol),
+    name: find(["nombre", "descripcion", "descripción", "descrip", "detalle", "title", "titulo", "título", "name"], refCol),
+    stock: find(["intcantidaddoc", "stock", "existencia", "cantidad", "inventario", "cant", "unidades", "disponible", "saldo", "qty"]),
     ref: refCol,
-    color: find(["color", "colour"]),
-    size: find(["talla", "size", "tamaño", "tamano", "lote", "strlote"]),
+    color: find(["strcolor", "color", "colour", "col"]),
+    size: find(["strlote", "talla", "size", "tamaño", "tamano", "lote"]),
     price: priceCol,
   };
 }
