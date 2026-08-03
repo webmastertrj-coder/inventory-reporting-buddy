@@ -82,9 +82,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
           if (data) {
             setUsers((prev) => {
-              const mappedUsers: Record<string, UserDatabaseEntry> = {};
+              const nextUsers: Record<string, UserDatabaseEntry> = {};
+
+              // Preserve non-vendedor accounts (e.g. admins)
+              Object.keys(prev).forEach((emailKey) => {
+                if (prev[emailKey].role !== "vendedor") {
+                  nextUsers[emailKey] = prev[emailKey];
+                }
+              });
+
+              // Set active sellers from cloud database
               data.forEach((row) => {
-                mappedUsers[row.email.toLowerCase()] = {
+                const emailKey = row.email.toLowerCase();
+                nextUsers[emailKey] = {
                   email: row.email,
                   name: row.name,
                   role: row.role as any,
@@ -94,32 +104,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 };
               });
 
-              // Detect local-only sellers that are not in the cloud
-              const localOnlySellers = Object.values(prev).filter(
-                (u) => u.role === "vendedor" && !mappedUsers[u.email.toLowerCase()]
-              );
-
-              if (localOnlySellers.length > 0) {
-                localOnlySellers.forEach((s) => {
-                  client
-                    .from("sellers")
-                    .insert({
-                      email: s.email.toLowerCase(),
-                      name: s.name,
-                      password: s.password || "vendedor123",
-                      role: s.role,
-                      commission: s.commission ?? 10,
-                      warehouse_id: s.warehouseId ?? "01",
-                    })
-                    .then(({ error: insErr }) => {
-                      if (insErr) console.error("Error backing up seller to cloud:", insErr);
-                    });
-                });
-              }
-              
-              const merged = { ...prev, ...mappedUsers };
-              localStorage.setItem(USERS_KEY, JSON.stringify(merged));
-              return merged;
+              localStorage.setItem(USERS_KEY, JSON.stringify(nextUsers));
+              return nextUsers;
             });
           }
         });

@@ -180,11 +180,14 @@ export async function syncFromCloud() {
       });
     }
 
-    // Gather all unique seller emails from sellers, inventories, and sales tables
+    // Gather active seller emails strictly from sellers table when available
     const allEmails = new Set<string>();
-    if (dbSellers) dbSellers.forEach((s) => allEmails.add(s.email.toLowerCase()));
-    if (dbInventories) dbInventories.forEach((i) => allEmails.add(i.seller_email.toLowerCase()));
-    if (dbSales) dbSales.forEach((sa) => allEmails.add(sa.seller_email.toLowerCase()));
+    if (dbSellers && dbSellers.length > 0) {
+      dbSellers.forEach((s) => allEmails.add(s.email.toLowerCase()));
+    } else {
+      if (dbInventories) dbInventories.forEach((i) => allEmails.add(i.seller_email.toLowerCase()));
+      if (dbSales) dbSales.forEach((sa) => allEmails.add(sa.seller_email.toLowerCase()));
+    }
 
     allEmails.forEach((email) => {
       const invData = dbInventories?.find((i) => i.seller_email.toLowerCase() === email);
